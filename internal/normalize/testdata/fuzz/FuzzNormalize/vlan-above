@@ -1,0 +1,6 @@
+go test fuzz v1
+uint8(28)
+uint8(1)
+int64(4096)
+string("")
+bool(false)

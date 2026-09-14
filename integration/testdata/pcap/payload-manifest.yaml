@@ -1,0 +1,57 @@
+{
+  "schema": "otel-netflow-pcap-payload-manifest",
+  "version": 1,
+  "kind": "synthetic-golden",
+  "golden_manifest_sha256": "0a26bbfce5eda954a15c13293d7469e30c5a6f1bdf18a07b50f139ffb6f2ec95",
+  "captures": [
+    {
+      "slot_id": "v5-canonical-ipv4-v1",
+      "pcap": "v5-canonical-ipv4-v1.pcap",
+      "golden": "v5/canonical-ipv4-v1.bin",
+      "length": 72,
+      "sha256": "eca9f9f71f13d5ee81d2f983a153ea5f9a97146a042c864a1fe721008578e8a6"
+    },
+    {
+      "slot_id": "v9-canonical-ipv4-v1",
+      "pcap": "v9-canonical-ipv4-v1.pcap",
+      "golden": "v9/canonical-ipv4-v1.bin",
+      "length": 148,
+      "sha256": "33691da9f430ed0cdde786a9bf6b5477c3b86460d9172a09f932687ed0e631fa"
+    },
+    {
+      "slot_id": "v9-canonical-ipv6-v1",
+      "pcap": "v9-canonical-ipv6-v1.pcap",
+      "golden": "v9/canonical-ipv6-v1.bin",
+      "length": 172,
+      "sha256": "4de5aea31a6c480c825c61159f98224a15e018745f9f8fc5d0e895c6de013e3d"
+    },
+    {
+      "slot_id": "v9-sampling-ie34-two-distinct-rates-v1",
+      "pcap": "v9-sampling-ie34-two-distinct-rates-v1.pcap",
+      "golden": "v9/sampling-ie34-two-distinct-rates-v1.bin",
+      "length": 192,
+      "sha256": "b11fc18a2cb76c88d0a74a75fdcab9884fe8982800044fabe5a0668e5edb004c"
+    },
+    {
+      "slot_id": "ipfix-canonical-ipv4-v1",
+      "pcap": "ipfix-canonical-ipv4-v1.pcap",
+      "golden": "ipfix/canonical-ipv4-v1.bin",
+      "length": 180,
+      "sha256": "3d73b0674317ae51fb7ddb569abb82796370b4f1e5037464cd14907ef30fe32c"
+    },
+    {
+      "slot_id": "ipfix-canonical-ipv6-v1",
+      "pcap": "ipfix-canonical-ipv6-v1.pcap",
+      "golden": "ipfix/canonical-ipv6-v1.bin",
+      "length": 204,
+      "sha256": "e46161fabb46dc39af82f54e14b746fe24969f5b5020aeed0eb5b2b29d0a7fb7"
+    },
+    {
+      "slot_id": "ipfix-sampling-ie34-two-distinct-rates-v1",
+      "pcap": "ipfix-sampling-ie34-two-distinct-rates-v1.pcap",
+      "golden": "ipfix/sampling-ie34-two-distinct-rates-v1.bin",
+      "length": 252,
+      "sha256": "b4239444964fa6dbb27e912363264cd3f21ba0e8e05afbc94b70ac7e83654bb7"
+    }
+  ]
+}

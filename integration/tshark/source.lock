@@ -1,0 +1,14 @@
+# TShark/Wireshark source and image identity lock for the local decoder oracle.
+schema=otel-netflow-tshark-source-v1
+image_ref=localhost/otel-netflow/tshark-oracle@sha256:1b0a680887ceb212beeda59fb3cf84289d00c138a3517028a8b651631e51f7c6
+image_id=d6d8cd27eb00a816133de0a27fdbc3d953cb80b034aef9d09b72e05ac5824b35
+platform=linux/amd64
+version=4.6.8
+source_tag=v4.6.8
+source_commit=e677bf052328efc1ed897a547fa161836a0e4ff7
+source_archive_sha256=37f61998b8739207b791fbc2a13aaeab4c3a3502a8bb0a837afb06301b01936f
+base_image=debian:13-slim
+base_digest=sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+executable_path=/opt/tshark-4.6.8/bin/tshark
+executable_sha256=021e06894d69ed7a4ed0709de69507b35bdeab7acc018d2a7a4e435db7bd2100
+identity_log_sha256=d5ba174be534ff2ef9ccdf04195aa428dffb8062340f91bdcb9e8ebfafabf503

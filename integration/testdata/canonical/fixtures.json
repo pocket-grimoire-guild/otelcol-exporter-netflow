@@ -1,0 +1,291 @@
+{
+  "schema": "otel-netflow-canonical-fixtures",
+  "version": 1,
+  "profile": {
+    "name": "contrib-netflowreceiver-v0.160.0",
+    "contrib_commit": "982f20b8a8e8a2569fab3e27cf8b008e8a5080c1",
+    "goflow2_commit": "c9824f41bcad11d4490a668ed5270b03056d8217"
+  },
+  "framing": {
+    "tuple_stream": "record-index:u32be,key-length:u16be,key:utf8,type:u8,value-length:u32be,value:bytes",
+    "logical_request": "magic:OTELNETFLOW-FIXTURE-V1,record-count:u32be,descriptor-json-length:u32be,descriptor-json:{attributes,hierarchy,mode,role{id,base_fixture_id,protocol,shape,metadata}}:utf8-sort_keys=true-separators=(',',':'),tuple-stream",
+    "independent_calculator": "magic:OTELNETFLOW-INDEPENDENT-TUPLES-V1,record-count:u32be,descriptor-json-length:u16be,descriptor-json:{attributes,hierarchy,mode,role{id,base_fixture_id,protocol,shape,metadata}}:utf8-sort_keys=true-separators=(',',':'),independently-derived-tuples",
+    "type_codes": {"string": 1, "int": 2, "bytes": 3},
+    "integer_encoding": "signed-int64-big-endian",
+    "attribute_order": "attribute_schema order, then generated custom order"
+  },
+  "hierarchy": {
+    "logs": 1,
+    "resource_logs": 1,
+    "scope_logs": 1,
+    "resource_attributes": {},
+    "scope_name": "otelcol/netflowreceiver",
+    "scope_attributes": {"receiver": "netflow"},
+    "parsed_body_empty": true,
+    "fixed_traversal_nodes": 11,
+    "record_base_nodes": 3,
+    "node_bytes": 64
+  },
+  "attribute_schema": [
+    {"name":"source.address","type":"string","required":true},
+    {"name":"source.port","type":"int","required":true},
+    {"name":"destination.address","type":"string","required":true},
+    {"name":"destination.port","type":"int","required":true},
+    {"name":"network.transport","type":"string","required":true},
+    {"name":"network.type","type":"string","required":true},
+    {"name":"flow.io.bytes","type":"int","required":true},
+    {"name":"flow.io.packets","type":"int","required":true},
+    {"name":"flow.type","type":"string","required":true},
+    {"name":"flow.sequence_num","type":"int","required":true},
+    {"name":"flow.time_received","type":"int","required":true},
+    {"name":"flow.start","type":"int","required":true},
+    {"name":"flow.end","type":"int","required":true},
+    {"name":"flow.sampling_rate","type":"int","required":true},
+    {"name":"flow.sampler_address","type":"string","required":true},
+    {"name":"flow.tcp_flags","type":"int","required":true},
+    {"name":"flow.in_if","type":"int","required":true},
+    {"name":"flow.out_if","type":"int","required":true},
+    {"name":"flow.ip_tos","type":"int","required":true},
+    {"name":"flow.ip_ttl","type":"int","required":true},
+    {"name":"flow.ip_flags","type":"int","required":true},
+    {"name":"flow.fragment_id","type":"int","required":true},
+    {"name":"flow.fragment_offset","type":"int","required":true},
+    {"name":"flow.ipv6_flow_label","type":"int","required":true},
+    {"name":"flow.icmp_type","type":"int","required":true},
+    {"name":"flow.icmp_code","type":"int","required":true},
+    {"name":"flow.src_mac","type":"string","required":true},
+    {"name":"flow.dst_mac","type":"string","required":true},
+    {"name":"flow.src_vlan","type":"int","required":true},
+    {"name":"flow.dst_vlan","type":"int","required":true},
+    {"name":"flow.vlan_id","type":"int","required":true},
+    {"name":"flow.next_hop","type":"string","required":false},
+    {"name":"flow.next_hop_as","type":"int","required":true},
+    {"name":"flow.src_as","type":"int","required":true},
+    {"name":"flow.dst_as","type":"int","required":true},
+    {"name":"flow.bgp_next_hop","type":"string","required":false},
+    {"name":"flow.src_net","type":"int","required":true},
+    {"name":"flow.dst_net","type":"int","required":true},
+    {"name":"flow.forwarding_status","type":"int","required":true},
+    {"name":"flow.observation_domain_id","type":"int","required":true},
+    {"name":"flow.observation_point_id","type":"int","required":true}
+  ],
+  "fixtures": [
+    {
+      "id": "canonical-ipv4-v1",
+      "kind": "base",
+      "protocol": "v9",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":42,"source_id":42,"engine_type":1,"engine_id":1},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257},
+        "sequence_start": 0,
+        "options": "none"
+      },
+      "attributes": {
+        "source.address":"192.0.2.1", "source.port":12345,
+        "destination.address":"198.51.100.2", "destination.port":443,
+        "network.transport":"tcp", "network.type":"ipv4",
+        "flow.io.bytes":56789, "flow.io.packets":1234,
+        "flow.type":"netflow_v9", "flow.sequence_num":7,
+        "flow.time_received":1788220802000000000,
+        "flow.start":1788220801000000000,
+        "flow.end":1788220801001000000,
+        "flow.sampling_rate":1000, "flow.sampler_address":"192.0.2.254",
+        "flow.tcp_flags":24, "flow.in_if":10, "flow.out_if":20,
+        "flow.ip_tos":0, "flow.ip_ttl":64, "flow.ip_flags":0,
+        "flow.fragment_id":0, "flow.fragment_offset":0,
+        "flow.ipv6_flow_label":0, "flow.icmp_type":0, "flow.icmp_code":0,
+        "flow.src_mac":"00:11:22:33:44:55", "flow.dst_mac":"66:77:88:99:aa:bb",
+        "flow.src_vlan":100, "flow.dst_vlan":200, "flow.vlan_id":100,
+        "flow.next_hop":"192.0.2.254", "flow.next_hop_as":64512,
+        "flow.src_as":64513, "flow.dst_as":64514,
+        "flow.bgp_next_hop":"198.51.100.1", "flow.src_net":24, "flow.dst_net":24,
+        "flow.forwarding_status":0, "flow.observation_domain_id":42,
+        "flow.observation_point_id":7
+      }
+    },
+    {
+      "id": "canonical-zero-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "v9",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":0,"source_id":0,"engine_type":0,"engine_id":0},
+        "uptime_origin": "1970-01-01T00:00:00Z",
+        "reserved_header_instant": "1970-01-01T00:00:00Z",
+        "template_ids": {"ipv4":256,"ipv6":257},
+        "sequence_start": 0,
+        "options": "none"
+      },
+      "overrides": {
+        "attributes": {
+          "source.address":"0.0.0.0", "source.port":0,
+          "destination.address":"0.0.0.0", "destination.port":0,
+          "network.transport":"hopopt", "flow.io.bytes":0, "flow.io.packets":0,
+          "flow.sequence_num":0, "flow.time_received":0, "flow.start":0,
+          "flow.end":0, "flow.sampling_rate":0, "flow.sampler_address":"0.0.0.0",
+          "flow.tcp_flags":0, "flow.in_if":0, "flow.out_if":0, "flow.ip_tos":0,
+          "flow.ip_ttl":0, "flow.ip_flags":0, "flow.fragment_id":0,
+          "flow.fragment_offset":0, "flow.ipv6_flow_label":0, "flow.icmp_type":0,
+          "flow.icmp_code":0, "flow.src_mac":"00:00:00:00:00:00",
+          "flow.dst_mac":"00:00:00:00:00:00", "flow.src_vlan":0, "flow.dst_vlan":0,
+          "flow.vlan_id":0, "flow.next_hop":"0.0.0.0", "flow.next_hop_as":0,
+          "flow.src_as":0, "flow.dst_as":0, "flow.bgp_next_hop":"0.0.0.0",
+          "flow.src_net":0, "flow.dst_net":0, "flow.forwarding_status":0,
+          "flow.observation_domain_id":0, "flow.observation_point_id":0
+        }
+      }
+    },
+    {
+      "id": "canonical-ipv6-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "v9",
+      "shape": "ipv6-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":43,"source_id":43,"engine_type":1,"engine_id":2},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257},
+        "sequence_start": 0,
+        "options": "none"
+      },
+      "overrides": {"attributes": {
+        "source.address":"2001:db8::1", "destination.address":"2001:db8::2",
+        "network.type":"ipv6", "flow.ipv6_flow_label":74565,
+        "flow.next_hop":"2001:db8::ff", "flow.bgp_next_hop":"2001:db8::fe",
+        "flow.src_net":64, "flow.dst_net":64
+      }}
+    },
+    {
+      "id": "canonical-next-hop-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "v9",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":44,"source_id":44,"engine_type":1,"engine_id":3},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257},
+        "sequence_start": 0,
+        "options": "none"
+      },
+      "overrides": {"remove_attributes":["flow.bgp_next_hop"]}
+    },
+    {
+      "id": "canonical-bgp-next-hop-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "ipfix",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":45,"source_id":45,"engine_type":1,"engine_id":4},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257},
+        "sequence_start": 0,
+        "options": "none"
+      },
+      "overrides": {"attributes":{"flow.type":"ipfix"},"remove_attributes":["flow.next_hop"]}
+    },
+    {
+      "id": "canonical-v5-ipv4-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "v5",
+      "shape": "ipv4-fixed-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":0,"source_id":0,"engine_type":1,"engine_id":5},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {}, "sequence_start": 0, "options": "none"
+      },
+      "overrides": {"attributes":{"flow.type":"netflow_v5"}}
+    },
+    {
+      "id": "canonical-ipfix-ipv4-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "ipfix",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":46,"source_id":46,"engine_type":1,"engine_id":6},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257}, "sequence_start": 0, "options": "none"
+      },
+      "overrides": {"attributes":{"flow.type":"ipfix"}}
+    },
+    {
+      "id": "canonical-ipfix-ipv6-v1",
+      "kind": "variant",
+      "base_fixture_id": "canonical-ipv6-v1",
+      "protocol": "ipfix",
+      "shape": "ipv6-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":51,"source_id":51,"engine_type":1,"engine_id":11},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257}, "sequence_start": 0, "options": "none"
+      },
+      "overrides": {"attributes":{"flow.type":"ipfix"}}
+    },
+    {
+      "id": "sampling-ie34-two-distinct-rates-v9-v1",
+      "kind": "two-rate",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "v9",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":47,"source_id":47,"engine_type":1,"engine_id":7},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257}, "sequence_start": 0,
+        "options": "none", "sampling_ie": {"identity":34,"width":4,"ordinary":true}
+      },
+      "records": [{"overrides":{"attributes":{"flow.sampling_rate":1000}}},{"overrides":{"attributes":{"flow.sampling_rate":2000}}}]
+    },
+    {
+      "id": "sampling-ie34-two-distinct-rates-ipfix-v1",
+      "kind": "two-rate",
+      "base_fixture_id": "canonical-ipfix-ipv4-v1",
+      "protocol": "ipfix",
+      "shape": "ipv4-core-v1",
+      "metadata": {
+        "configured_ids": {"observation_domain_id":48,"source_id":48,"engine_type":1,"engine_id":8},
+        "uptime_origin": "2026-09-01T00:00:00Z",
+        "reserved_header_instant": "2026-09-01T00:00:03Z",
+        "template_ids": {"ipv4":256,"ipv6":257}, "sequence_start": 0,
+        "options": "none", "sampling_ie": {"identity":34,"width":4,"ordinary":true}
+      },
+      "records": [{"overrides":{"attributes":{"flow.sampling_rate":1000}}},{"overrides":{"attributes":{"flow.sampling_rate":2000}}}]
+    }
+  ],
+  "generated_cases": [
+    {
+      "id": "hard-admission-unselected-v1",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "ipfix",
+      "shape": "ipv4-core-v1",
+      "metadata": {"configured_ids":{"observation_domain_id":49,"source_id":49,"engine_type":1,"engine_id":9},"uptime_origin":"2026-09-01T00:00:00Z","reserved_header_instant":"2026-09-01T00:00:03Z","template_ids":{"ipv4":256,"ipv6":257},"sequence_start":0,"options":"none"},
+      "generator": {"version":"hard-admission-v1","record_count":8192,"padding_key":"plan000.unselected_pad","padding_type":"bytes","scalar_ceiling":1048576,"logical_budget":67108864,"node_charge":64,"selected":false,"fill":"ascending-record-byte-pattern-mod-251","attributes_per_record":42,"record_nodes":45},
+      "hashes": {"tuple_stream_sha256":"7aac590be29a64eba71abe60f78bcf527de3e491463841147d98e8171aee98b1", "logical_request_sha256":"e3a7c2c6be47ad627c3267ad98182c052342df5094879a2291ad1cae882c82f3", "independent_calculator_sha256":"2b9dd18287ed657ae9ade78614140d629036c01011a1451ad2f626f817c9a456"},
+      "occupancy": {"logical_bytes":67108864,"fixed_occupancy_bytes":29541094,"padding_total":37567770,"node_count":368651,"record_nodes":45,"attributes_per_record":42,"scope_bytes":38,"canonical_key_string_bytes":704,"custom_key_bytes":22,"pad_key_bytes":22,"subset_node_count":0,"subset_record_nodes":0,"subset_attributes_per_record":0,"copied_subset_bytes":0,"max_message_bytes":0,"q_min":0,"q_max":1048576}
+    },
+    {
+      "id": "hard-copy-selected-v1",
+      "base_fixture_id": "canonical-ipv4-v1",
+      "protocol": "ipfix",
+      "shape": "ipv4-core-v1",
+      "metadata": {"configured_ids":{"observation_domain_id":50,"source_id":50,"engine_type":1,"engine_id":10},"uptime_origin":"2026-09-01T00:00:00Z","reserved_header_instant":"2026-09-01T00:00:03Z","template_ids":{"ipv4":256,"ipv6":257},"sequence_start":0,"options":"none"},
+      "generator": {"version":"hard-copy-selected-v1","record_count":1024,"custom_prefix":"plan000.copy_pad_","custom_count":32,"custom_pen":32473,"custom_element_id_start":100,"custom_type":"octet_array","max_length":4096,"path_mtu":65535,"outer_header_reserve":28,"max_datagram_size":65507,"core_record_bytes":72,"variable_prefix_bytes":3,"message_set_header_bytes":20,"logical_budget":67108864,"node_charge":64,"selected":true,"fill":"quotient-remainder-byte-pattern-mod-251","endpoint_host":"192.0.2.200","endpoint_port":2055,"attributes_per_record":73,"record_nodes":76,"subset_attributes_per_record":52,"subset_record_nodes":55},
+      "hashes": {"tuple_stream_sha256":"ef9f4bf7303643feced04501aabf2c3b097367fabf88236c51108879e3d6b428", "logical_request_sha256":"23ba0de3e11d4ce32900255736ef58ef1c1965986d8efc3334b39cb8f0027785", "independent_calculator_sha256":"0727ce98fea6ee72156fae9b80d218f0fb968f7f174de43afdb61b948ace3ac9"},
+      "occupancy": {"logical_bytes":67108864,"fixed_occupancy_bytes":6324966,"padding_total":60783898,"node_count":77835,"record_nodes":76,"attributes_per_record":73,"scope_bytes":38,"canonical_key_string_bytes":704,"custom_key_bytes":608,"pad_key_bytes":0,"subset_node_count":56331,"subset_record_nodes":55,"subset_attributes_per_record":52,"copied_subset_bytes":65302528,"max_message_bytes":59548,"q_min":59359,"q_max":59360},
+      "copied_subset": {"logical_bytes":65302528,"logical_request_sha256":"792b1844c00034cf56ab788dc6686cc08afe8cd94473e58c49c8b51a9e273a80","every_selected_byte_survives":true}
+    }
+  ]
+}

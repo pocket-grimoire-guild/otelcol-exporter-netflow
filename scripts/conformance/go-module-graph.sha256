@@ -1,0 +1,2 @@
+# sha256sum of `go list -mod=readonly -m -f '{{if not .Main}}{{.Path}}={{.Version}}{{end}}' all | sort`
+1df3fc6b862b0c90fe7f4d3bb46d7fd0199c11c2d6cc62054c1eb27f19d7b80a

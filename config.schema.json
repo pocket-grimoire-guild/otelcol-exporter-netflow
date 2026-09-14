@@ -1,0 +1,434 @@
+{
+  "type": "object",
+  "properties": {
+    "dns": {
+      "type": "object",
+      "properties": {
+        "refresh_interval": {
+          "type": "string",
+          "default": "5m",
+          "pattern": "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$"
+        },
+        "stale_after": {
+          "type": "string",
+          "default": "1h",
+          "pattern": "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$"
+        },
+        "timeout": {
+          "type": "string",
+          "default": "5s",
+          "pattern": "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$"
+        }
+      },
+      "description": "Hostname resolution refresh and staleness controls."
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "UDP destination in host:port form.",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "engine_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "engine_type": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "observation_domain_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "sampling_mode": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "source_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "description": "Protocol-specific exporter identity values.",
+      "minProperties": 1
+    },
+    "ipfix": {
+      "type": "object",
+      "properties": {
+        "template_refresh_data_packets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "description": "IPFIX template refresh controls."
+    },
+    "mapping": {
+      "type": "object",
+      "properties": {
+        "custom": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "allow_private": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              },
+              "element_id": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 32767
+              },
+              "encoding": {
+                "type": "string",
+                "enum": [
+                  "unsigned8",
+                  "unsigned16",
+                  "unsigned32",
+                  "unsigned64",
+                  "signed8",
+                  "signed16",
+                  "signed32",
+                  "signed64",
+                  "ipv4_address",
+                  "ipv6_address",
+                  "mac_address",
+                  "octet_array",
+                  "string"
+                ]
+              },
+              "field_type": {
+                "type": "integer",
+                "minimum": 256,
+                "maximum": 65535
+              },
+              "fixed_length": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "max_length": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 65535
+              },
+              "pen": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              },
+              "source": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024
+              },
+              "variable": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ]
+              }
+            },
+            "required": [
+              "source",
+              "encoding"
+            ]
+          },
+          "description": "Protocol-specific v9 private or IPFIX enterprise fields.",
+          "maxItems": 32
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "canonical": {
+                "type": "string",
+                "description": "Exact canonical receiver field name.",
+                "enum": [
+                  "source.address",
+                  "source.port",
+                  "destination.address",
+                  "destination.port",
+                  "network.transport",
+                  "network.type",
+                  "flow.io.bytes",
+                  "flow.io.packets",
+                  "flow.type",
+                  "flow.sequence_num",
+                  "flow.time_received",
+                  "flow.start",
+                  "flow.end",
+                  "flow.sampling_rate",
+                  "flow.sampler_address",
+                  "flow.tcp_flags",
+                  "flow.in_if",
+                  "flow.out_if",
+                  "flow.ip_tos",
+                  "flow.ip_ttl",
+                  "flow.ip_flags",
+                  "flow.fragment_id",
+                  "flow.fragment_offset",
+                  "flow.ipv6_flow_label",
+                  "flow.icmp_type",
+                  "flow.icmp_code",
+                  "flow.src_mac",
+                  "flow.dst_mac",
+                  "flow.src_vlan",
+                  "flow.dst_vlan",
+                  "flow.vlan_id",
+                  "flow.next_hop",
+                  "flow.next_hop_as",
+                  "flow.src_as",
+                  "flow.dst_as",
+                  "flow.bgp_next_hop",
+                  "flow.src_net",
+                  "flow.dst_net",
+                  "flow.forwarding_status",
+                  "flow.observation_domain_id",
+                  "flow.observation_point_id",
+                  "flow.icmp_type_code"
+                ],
+                "minLength": 1
+              },
+              "target": {
+                "type": "string",
+                "description": "Protocol-specific target for an ambiguous field."
+              }
+            },
+            "required": [
+              "canonical"
+            ]
+          },
+          "description": "Ordered canonical fields for an explicit mapping.",
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "input_guarantees": {
+          "type": "object",
+          "properties": {
+            "flow_io_bytes": {
+              "type": "string",
+              "enum": [
+                "",
+                "layer3_total_octets"
+              ]
+            }
+          },
+          "description": "Provenance assertions required for selected lossy fields."
+        },
+        "loss_policy": {
+          "type": "string",
+          "description": "Policy for explicitly documented mapping loss.",
+          "enum": [
+            "encode_and_count",
+            "reject"
+          ]
+        },
+        "network_type_versions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string",
+                "enum": [
+                  "ipv4",
+                  "ipv6"
+                ],
+                "minLength": 1
+              },
+              "version": {
+                "type": "integer",
+                "enum": [
+                  4,
+                  6
+                ]
+              }
+            },
+            "required": [
+              "token",
+              "version"
+            ]
+          },
+          "description": "Exact receiver network.type token to IP version mappings.",
+          "maxItems": 2
+        },
+        "profile": {
+          "type": "string",
+          "description": "Built-in mapping profile. Use fields instead for an explicit mapping.",
+          "enum": [
+            "contrib-netflowreceiver-v0.160.0/netflow-v5-fixed-v1",
+            "contrib-netflowreceiver-v0.160.0/netflow-v9-core-v1",
+            "contrib-netflowreceiver-v0.160.0/netflow-v9-timed-v1",
+            "contrib-netflowreceiver-v0.160.0/ipfix-core-v1",
+            "contrib-netflowreceiver-v0.160.0/ipfix-general-v1"
+          ],
+          "minLength": 1
+        },
+        "protocol_identifiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "token": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "token",
+              "number"
+            ]
+          },
+          "description": "Exact receiver network.transport token to protocol number mappings.",
+          "maxItems": 32
+        }
+      },
+      "description": "Explicit profile or field mapping and its loss policy.",
+      "required": [
+        "loss_policy"
+      ]
+    },
+    "max_datagram_size": {
+      "type": "integer",
+      "description": "Maximum UDP payload size in bytes.",
+      "default": 464,
+      "minimum": 128,
+      "maximum": 65507
+    },
+    "max_records_per_message": {
+      "type": "integer",
+      "description": "Optional record cap per packet.",
+      "minimum": 1,
+      "maximum": 1024
+    },
+    "netflow_v9": {
+      "type": "object",
+      "properties": {
+        "template_refresh_packets": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      },
+      "description": "NetFlow v9 template refresh controls."
+    },
+    "path_mtu": {
+      "type": "integer",
+      "description": "Optional path MTU limit for packetization.",
+      "minimum": 512,
+      "maximum": 65535
+    },
+    "protocol": {
+      "type": "string",
+      "description": "Wire protocol emitted by the exporter.",
+      "enum": [
+        "netflow_v5",
+        "netflow_v9",
+        "ipfix"
+      ]
+    },
+    "retry_on_failure": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "enum": [
+            false
+          ]
+        }
+      },
+      "description": "Retry is deliberately disabled for this exporter."
+    },
+    "schema": {
+      "type": "string",
+      "description": "Pinned receiver schema used by the mapping contract.",
+      "default": "contrib-netflowreceiver-v0.160.0",
+      "enum": [
+        "contrib-netflowreceiver-v0.160.0"
+      ]
+    },
+    "sending_queue": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "enum": [
+            false
+          ]
+        }
+      },
+      "description": "Sending queue is deliberately disabled for this exporter."
+    },
+    "shutdown_drain_timeout": {
+      "type": "string",
+      "description": "Maximum shutdown drain period.",
+      "default": "5s",
+      "pattern": "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$"
+    },
+    "templates": {
+      "type": "object",
+      "properties": {
+        "id_base": {
+          "type": "integer",
+          "default": 256,
+          "minimum": 256,
+          "maximum": 65535
+        },
+        "initial_copies": {
+          "type": "integer",
+          "default": 2,
+          "minimum": 2,
+          "maximum": 8
+        },
+        "refresh_interval": {
+          "type": "string",
+          "default": "10m",
+          "pattern": "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$"
+        }
+      },
+      "description": "Template identifiers, copies and refresh timing."
+    },
+    "timeout": {
+      "type": "string",
+      "description": "UDP dial and write timeout.",
+      "default": "5s",
+      "pattern": "^\\+?(([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$"
+    },
+    "uptime_origin": {
+      "type": "integer",
+      "description": "Unix nanosecond origin used for v5 and timed v9 uptime fields.",
+      "minimum": 0,
+      "maximum": 9223372036854776000
+    }
+  },
+  "$id": "github.com/pocket-grimoire-guild/otelcol-exporter-netflow",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "exporter/netflow",
+  "description": "Configuration for the NetFlow and IPFIX logs exporter.",
+  "required": [
+    "endpoint",
+    "protocol",
+    "identity",
+    "mapping"
+  ]
+}

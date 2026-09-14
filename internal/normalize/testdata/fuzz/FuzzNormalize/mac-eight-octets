@@ -1,0 +1,6 @@
+go test fuzz v1
+uint8(26)
+uint8(2)
+int64(0)
+string("00:11:22:33:44:55:66:77")
+bool(false)

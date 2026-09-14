@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("pen-count-limit")
+uint8(69)
+uint8(0)
+uint64(0)

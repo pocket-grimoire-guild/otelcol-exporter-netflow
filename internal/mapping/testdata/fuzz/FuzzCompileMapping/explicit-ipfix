@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("explicit-ipfix")
+uint8(3)
+uint8(0)
+uint64(0)

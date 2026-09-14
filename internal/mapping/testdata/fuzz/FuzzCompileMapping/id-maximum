@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("id-maximum")
+uint8(53)
+uint8(0)
+uint64(0)

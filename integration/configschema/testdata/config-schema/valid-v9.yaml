@@ -1,0 +1,35 @@
+endpoint: 127.0.0.1:4739
+protocol: netflow_v9
+schema: contrib-netflowreceiver-v0.160.0
+identity:
+  source_id: 7
+mapping:
+  profile: contrib-netflowreceiver-v0.160.0/netflow-v9-core-v1
+  protocol_identifiers:
+    - token: tcp
+      number: 6
+  network_type_versions:
+    - token: ipv4
+      version: 4
+    - token: ipv6
+      version: 6
+  loss_policy: encode_and_count
+templates:
+  id_base: 300
+  initial_copies: 3
+  refresh_interval: 30s
+netflow_v9:
+  template_refresh_packets: 30
+max_datagram_size: 1200
+path_mtu: 1500
+max_records_per_message: 4
+timeout: 5s
+shutdown_drain_timeout: 5s
+dns:
+  refresh_interval: 1m
+  stale_after: 10m
+  timeout: 5s
+sending_queue:
+  enabled: false
+retry_on_failure:
+  enabled: false

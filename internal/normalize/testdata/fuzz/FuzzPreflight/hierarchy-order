@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("order")
+uint8(4)
+uint8(0)

@@ -1,0 +1,6 @@
+go test fuzz v1
+uint8(0)
+uint8(2)
+int64(0)
+string("fe80::1%eth0")
+bool(true)

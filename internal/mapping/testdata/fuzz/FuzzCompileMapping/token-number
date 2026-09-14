@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("token-number")
+uint8(25)
+uint8(0)
+uint64(0)

@@ -1,0 +1,20 @@
+# Run OCB from the repository root; replaces is relative to dist/ocb/go.mod.
+dist:
+  module: github.com/pocket-grimoire-guild/otelcol-exporter-netflow/distribution/collector
+  name: otel-netflow-collector
+  description: OpenTelemetry Collector with the local NetFlow exporter
+  version: 0.0.0-dev
+  output_path: ./dist/ocb
+receivers:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/netflowreceiver v0.160.0
+exporters:
+  - gomod: github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.0.0
+    name: netflowexporter
+providers:
+  - gomod: go.opentelemetry.io/collector/confmap/provider/envprovider v1.66.0
+  - gomod: go.opentelemetry.io/collector/confmap/provider/fileprovider v1.66.0
+telemetry:
+  gomod: go.opentelemetry.io/collector/service v0.160.0
+  import: go.opentelemetry.io/collector/service/telemetry/otelconftelemetry
+replaces:
+  - github.com/pocket-grimoire-guild/otelcol-exporter-netflow => ../..

@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("fields-limit-valid")
+uint8(61)
+uint8(0)
+uint64(0)

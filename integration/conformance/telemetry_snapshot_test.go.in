@@ -1,0 +1,223 @@
+package netflowexporter
+
+// This file is compiled through the temporary Go overlay used by
+// scripts/conformance/run.sh. It supplies the rich SDK snapshot serializer
+// while the overlayed root test remains the source of the exercised behavior.
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+)
+
+type conformanceAttribute struct {
+	Key   string `json:"key"`
+	Type  string `json:"type"`
+	Value any    `json:"value"`
+}
+
+type conformanceResource struct {
+	SchemaURL  string                 `json:"schema_url,omitempty"`
+	Attributes []conformanceAttribute `json:"attributes"`
+}
+
+type conformanceScope struct {
+	Name       string                 `json:"name"`
+	Version    string                 `json:"version,omitempty"`
+	SchemaURL  string                 `json:"schema_url,omitempty"`
+	Attributes []conformanceAttribute `json:"attributes"`
+}
+
+type conformancePoint struct {
+	Value             int64                  `json:"value"`
+	Attributes        []conformanceAttribute `json:"attributes"`
+	StartTimeUnixNano uint64                 `json:"start_time_unix_nano,omitempty"`
+	TimeUnixNano      uint64                 `json:"time_unix_nano,omitempty"`
+}
+
+type conformanceMetric struct {
+	Name        string             `json:"name"`
+	Unit        string             `json:"unit"`
+	Description string             `json:"description"`
+	DataType    string             `json:"data_type"`
+	Monotonic   bool               `json:"monotonic"`
+	Temporality string             `json:"temporality,omitempty"`
+	Points      []conformancePoint `json:"points"`
+}
+
+type conformanceScopeMetrics struct {
+	Scope   conformanceScope    `json:"scope"`
+	Metrics []conformanceMetric `json:"metrics"`
+}
+
+type conformanceSnapshot struct {
+	Mode          string                    `json:"mode"`
+	Source        string                    `json:"source"`
+	CaptureID     string                    `json:"capture_id"`
+	CapturedAt    string                    `json:"captured_at"`
+	ScopeCount    int                       `json:"scope_count"`
+	Resource      conformanceResource       `json:"resource"`
+	ResourceAttrs []string                  `json:"resource_attributes"`
+	ScopeMetrics  []conformanceScopeMetrics `json:"scope_metrics"`
+	Metrics       []conformanceMetric       `json:"metrics"`
+}
+
+func conformanceAttributeValue(value attribute.Value) (string, any, error) {
+	switch value.Type() {
+	case attribute.BOOL:
+		return "bool", value.AsBool(), nil
+	case attribute.BOOLSLICE:
+		return "bool[]", value.AsBoolSlice(), nil
+	case attribute.INT64:
+		return "int64", value.AsInt64(), nil
+	case attribute.INT64SLICE:
+		return "int64[]", value.AsInt64Slice(), nil
+	case attribute.FLOAT64:
+		return "float64", value.AsFloat64(), nil
+	case attribute.FLOAT64SLICE:
+		return "float64[]", value.AsFloat64Slice(), nil
+	case attribute.STRING:
+		return "string", value.AsString(), nil
+	case attribute.STRINGSLICE:
+		return "string[]", value.AsStringSlice(), nil
+	case attribute.BYTESLICE:
+		return "bytes", base64.StdEncoding.EncodeToString(value.AsByteSlice()), nil
+	default:
+		return "", nil, fmt.Errorf("unsupported SDK attribute type %s", value.Type())
+	}
+}
+
+func conformanceAttributes(set attribute.Set) ([]conformanceAttribute, error) {
+	values := set.ToSlice()
+	result := make([]conformanceAttribute, 0, len(values))
+	for _, value := range values {
+		typ, data, err := conformanceAttributeValue(value.Value)
+		if err != nil {
+			return nil, fmt.Errorf("attribute %q: %w", value.Key, err)
+		}
+		result = append(result, conformanceAttribute{Key: string(value.Key), Type: typ, Value: data})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Key < result[j].Key })
+	return result, nil
+}
+
+func conformanceScopeFromSDK(scope metricdata.ScopeMetrics) (conformanceScope, error) {
+	attrs, err := conformanceAttributes(scope.Scope.Attributes)
+	if err != nil {
+		return conformanceScope{}, err
+	}
+	return conformanceScope{
+		Name: scope.Scope.Name, Version: scope.Scope.Version, SchemaURL: scope.Scope.SchemaURL,
+		Attributes: attrs,
+	}, nil
+}
+
+func conformancePointFromSDK(value int64, attrs attribute.Set, start, timestamp time.Time) (conformancePoint, error) {
+	pointAttrs, err := conformanceAttributes(attrs)
+	if err != nil {
+		return conformancePoint{}, err
+	}
+	point := conformancePoint{Value: value, Attributes: pointAttrs}
+	if !start.IsZero() {
+		point.StartTimeUnixNano = uint64(start.UnixNano())
+	}
+	if !timestamp.IsZero() {
+		point.TimeUnixNano = uint64(timestamp.UnixNano())
+	}
+	return point, nil
+}
+
+func conformanceMetricFromSDK(metric metricdata.Metrics) (conformanceMetric, error) {
+	result := conformanceMetric{Name: metric.Name, Unit: metric.Unit, Description: metric.Description}
+	switch data := metric.Data.(type) {
+	case metricdata.Sum[int64]:
+		result.DataType, result.Monotonic, result.Temporality = "sum[int64]", data.IsMonotonic, data.Temporality.String()
+		for _, value := range data.DataPoints {
+			point, err := conformancePointFromSDK(value.Value, value.Attributes, value.StartTime, value.Time)
+			if err != nil {
+				return conformanceMetric{}, err
+			}
+			result.Points = append(result.Points, point)
+		}
+	case metricdata.Gauge[int64]:
+		result.DataType = "gauge[int64]"
+		for _, value := range data.DataPoints {
+			point, err := conformancePointFromSDK(value.Value, value.Attributes, value.StartTime, value.Time)
+			if err != nil {
+				return conformanceMetric{}, err
+			}
+			result.Points = append(result.Points, point)
+		}
+	default:
+		return conformanceMetric{}, fmt.Errorf("unsupported SDK metric aggregation %T for %s", metric.Data, metric.Name)
+	}
+	sort.Slice(result.Points, func(i, j int) bool {
+		return conformancePointKey(result.Points[i]) < conformancePointKey(result.Points[j])
+	})
+	return result, nil
+}
+
+func conformancePointKey(point conformancePoint) string {
+	data, _ := json.Marshal(point.Attributes)
+	return string(data)
+}
+
+func conformanceSnapshotFromMetrics(t *testing.T, rm *metricdata.ResourceMetrics) conformanceSnapshot {
+	t.Helper()
+	resourceAttrs, err := conformanceAttributes(attribute.NewSet(rm.Resource.Attributes()...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := conformanceSnapshot{
+		Mode: "actual-sdk-snapshot", Source: "TestTelemetryConditionalProbe",
+		CaptureID:  fmt.Sprintf("%d-%d", time.Now().UTC().UnixNano(), os.Getpid()),
+		CapturedAt: time.Now().UTC().Format(time.RFC3339Nano), ScopeCount: len(rm.ScopeMetrics),
+		Resource: conformanceResource{SchemaURL: rm.Resource.SchemaURL(), Attributes: resourceAttrs},
+	}
+	for _, value := range resourceAttrs {
+		snapshot.ResourceAttrs = append(snapshot.ResourceAttrs, value.Key)
+	}
+	for _, scope := range rm.ScopeMetrics {
+		scopeSnapshot, err := conformanceScopeFromSDK(scope)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := conformanceScopeMetrics{Scope: scopeSnapshot}
+		for _, metric := range scope.Metrics {
+			metricSnapshot, err := conformanceMetricFromSDK(metric)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entry.Metrics = append(entry.Metrics, metricSnapshot)
+			snapshot.Metrics = append(snapshot.Metrics, metricSnapshot)
+		}
+		sort.Slice(entry.Metrics, func(i, j int) bool { return entry.Metrics[i].Name < entry.Metrics[j].Name })
+		snapshot.ScopeMetrics = append(snapshot.ScopeMetrics, entry)
+	}
+	sort.Slice(snapshot.ScopeMetrics, func(i, j int) bool {
+		return snapshot.ScopeMetrics[i].Scope.Name < snapshot.ScopeMetrics[j].Scope.Name
+	})
+	sort.Slice(snapshot.Metrics, func(i, j int) bool { return snapshot.Metrics[i].Name < snapshot.Metrics[j].Name })
+	return snapshot
+}
+
+func writeConformanceSnapshot(t *testing.T, path string, snapshot conformanceSnapshot) {
+	t.Helper()
+	if path == "" {
+		t.Fatal("NETFLOW_CONFORMANCE_CAPTURE is required")
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

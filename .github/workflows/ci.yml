@@ -1,0 +1,195 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    name: Fast checks and root race
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+          cache: true
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Check
+        run: make check
+      - name: Test
+        run: make test
+      - name: Race
+        run: go test -race ./...
+      - name: CI guard regressions
+        run: scripts/ci/test-runner.sh
+      - name: Summary
+        if: always()
+        run: echo 'Fast tier ran make check, make test, root race and CI guard checks; see step outcomes.' >> "$GITHUB_STEP_SUMMARY"
+
+  qualification:
+    name: Qualification / ${{ matrix.tier }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        tier: [generated, ocb, receiver]
+    env:
+      NETFLOW_CI_ARTIFACTS: ${{ github.workspace }}/dist/ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            integration/receiver/go.sum
+      - name: Run selected tier
+        run: scripts/ci/run-tier.sh "${{ matrix.tier }}"
+      - name: Summary
+        if: always()
+        run: |
+          echo 'Qualification tier: ${{ matrix.tier }}; see step outcome and retained summaries.' >> "$GITHUB_STEP_SUMMARY"
+          if [[ -d dist/ci ]]; then
+            find dist/ci -name summary.txt -type f -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain validated evidence
+        if: ${{ always() && hashFiles('dist/ci/*/UPLOAD_READY') != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: qualification-${{ matrix.tier }}
+          path: dist/ci/
+          if-no-files-found: error
+          retention-days: 7
+
+  conformance:
+    name: Semantic conventions conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      NETFLOW_CI_ARTIFACTS: ${{ github.workspace }}/dist/ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+          cache: true
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
+        with:
+          python-version: '3.13.5'
+          check-latest: false
+      - name: Run conformance tier
+        run: scripts/ci/run-tier.sh conformance
+      - name: Summary
+        if: always()
+        run: |
+          echo 'Conformance tier runs the pinned local semantic-conventions harness; see step outcome and retained summaries.' >> "$GITHUB_STEP_SUMMARY"
+          if [[ -d dist/ci ]]; then
+            find dist/ci -name summary.txt -type f -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Select fresh gate-approved evidence
+        id: conformance-artifact
+        if: always()
+        run: |
+          [[ -d dist/ci ]] || {
+            echo 'No CI artifact directory was created.' >&2
+            exit 1
+          }
+          ready=()
+          while IFS= read -r -d '' marker; do
+            ready+=("$marker")
+          done < <(find dist/ci -mindepth 2 -maxdepth 2 -type f -name UPLOAD_READY -print0)
+          (( ${#ready[@]} == 1 )) || {
+            echo "Expected exactly one fresh gate-approved conformance artifact, found ${#ready[@]}." >&2
+            exit 1
+          }
+          marker=${ready[0]}
+          artifact_dir=${marker%/UPLOAD_READY}
+          [[ ${artifact_dir##*/} == conformance.* && -d "$artifact_dir" && ! -L "$artifact_dir" ]] || {
+            echo "Resolved artifact is not a fresh conformance directory: $artifact_dir" >&2
+            exit 1
+          }
+          grep -qx 'tier=conformance' "$marker" || {
+            echo "Resolved marker is not for the conformance tier: $marker" >&2
+            exit 1
+          }
+          printf 'path=%s\n' "$artifact_dir" >> "$GITHUB_OUTPUT"
+      - name: Retain validated conformance evidence
+        if: ${{ always() && steps.conformance-artifact.outputs.path != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: conformance
+          path: ${{ steps.conformance-artifact.outputs.path }}
+          if-no-files-found: error
+          retention-days: 7
+
+  dispatch-guard:
+    name: Manual qualification branch guard
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require default branch
+        env:
+          SELECTED_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$SELECTED_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo 'Manual interoperability requires the default branch.' >&2
+            exit 1
+          fi
+
+  interoperability:
+    name: Manual pinned external interoperability
+    if: github.event_name == 'workflow_dispatch'
+    needs: dispatch-guard
+    runs-on: [self-hosted, linux, x64, netflow-interop]
+    timeout-minutes: 55
+    env:
+      NETFLOW_CI_ARTIFACTS: ${{ github.workspace }}/dist/ci
+      NETFLOW_INTEROP_LANES: tshark,pmacct,ipfixcol2,nfdump
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Run all selected external lanes
+        run: |
+          export NETFLOW_TSHARK_IMAGE="$(<integration/tshark/IMAGE_DIGEST)"
+          scripts/ci/run-tier.sh interop
+      - name: Summary
+        if: always()
+        run: |
+          echo 'Manual external tier selected TShark, pmacct, IPFIXcol2 and nfdump; see step outcome.' >> "$GITHUB_STEP_SUMMARY"
+          if [[ -d dist/ci ]]; then
+            find dist/ci -name summary.txt -type f -exec cat {} + >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Retain validated evidence
+        if: ${{ always() && hashFiles('dist/ci/*/UPLOAD_READY') != '' }}
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: interoperability
+          path: dist/ci/
+          if-no-files-found: error
+          retention-days: 7

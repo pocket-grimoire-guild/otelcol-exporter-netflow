@@ -1,0 +1,20 @@
+# Build, test and qualification outputs
+/bin/
+/dist/
+/artifacts/
+/coverage.out
+*.test
+/integration/testdata/pcap/*.pcap
+
+# Local environment and tools
+.env
+*.local
+.venv/
+__pycache__/
+*.py[cod]
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

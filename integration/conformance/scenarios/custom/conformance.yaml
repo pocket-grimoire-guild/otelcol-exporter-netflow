@@ -1,0 +1,51 @@
+# The custom package has one valid run and two deliberate controls. Controls
+# have no expected_violations entry: strict mode must fail on the exact Weaver
+# finding, while --report-only must complete and retain WARN evidence.
+instrumented_library: current-netflow-exporter
+instrumentation_library: task-local-go-probe
+
+scenarios:
+  valid:
+    run: python3 replay.py --mode valid
+    metrics:
+      - otelcol_exporter_in_flight_requests
+      - otelcol_exporter_sent_log_records
+      - otelcol_netflow.exporter.admission
+      - otelcol_netflow.exporter.bytes
+      - otelcol_netflow.exporter.data_messages
+      - otelcol_netflow.exporter.dns
+      - otelcol_netflow.exporter.endpoint_epochs
+      - otelcol_netflow.exporter.failures
+      - otelcol_netflow.exporter.losses
+      - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.templates
+
+  type_mismatch_control:
+    run: python3 replay.py --mode type_mismatch
+    metrics:
+      - otelcol_exporter_in_flight_requests
+      - otelcol_exporter_sent_log_records
+      - otelcol_netflow.exporter.admission
+      - otelcol_netflow.exporter.bytes
+      - otelcol_netflow.exporter.data_messages
+      - otelcol_netflow.exporter.dns
+      - otelcol_netflow.exporter.endpoint_epochs
+      - otelcol_netflow.exporter.failures
+      - otelcol_netflow.exporter.losses
+      - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.templates
+
+  missing_required_outcome_control:
+    run: python3 replay.py --mode missing_required_outcome
+    metrics:
+      - otelcol_exporter_in_flight_requests
+      - otelcol_exporter_sent_log_records
+      - otelcol_netflow.exporter.admission
+      - otelcol_netflow.exporter.bytes
+      - otelcol_netflow.exporter.data_messages
+      - otelcol_netflow.exporter.dns
+      - otelcol_netflow.exporter.endpoint_epochs
+      - otelcol_netflow.exporter.failures
+      - otelcol_netflow.exporter.losses
+      - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.templates

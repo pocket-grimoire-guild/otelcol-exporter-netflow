@@ -1,0 +1,1818 @@
+{
+  "schema": "otel-netflow-mapping-coverage",
+  "version": 1,
+  "sources": {
+    "receiver_profile": {
+      "id": "contrib-netflowreceiver-v0.160.0",
+      "contrib_commit": "982f20b8a8e8a2569fab3e27cf8b008e8a5080c1",
+      "goflow2_commit": "c9824f41bcad11d4490a668ed5270b03056d8217",
+      "path": "docs/compatibility/receiver-attributes.md",
+      "sha256": "587f155e51b9d7eee55d61b42f5f97308c926004b7073f28963de85b1cfcc9d4"
+    },
+    "matrix": {
+      "id": "receiver-to-protocol-conversion-matrix-v1",
+      "path": "docs/compatibility/protocol-mapping.md",
+      "sha256": "8f72fb01b702afdeb493e7a4413d0b1d20408163c669000122c428ac8f679104"
+    }
+  },
+  "canonical": {
+    "attributes": [
+      "source.address",
+      "source.port",
+      "destination.address",
+      "destination.port",
+      "network.transport",
+      "network.type",
+      "flow.io.bytes",
+      "flow.io.packets",
+      "flow.type",
+      "flow.sequence_num",
+      "flow.time_received",
+      "flow.start",
+      "flow.end",
+      "flow.sampling_rate",
+      "flow.sampler_address",
+      "flow.tcp_flags",
+      "flow.in_if",
+      "flow.out_if",
+      "flow.ip_tos",
+      "flow.ip_ttl",
+      "flow.ip_flags",
+      "flow.fragment_id",
+      "flow.fragment_offset",
+      "flow.ipv6_flow_label",
+      "flow.icmp_type",
+      "flow.icmp_code",
+      "flow.src_mac",
+      "flow.dst_mac",
+      "flow.src_vlan",
+      "flow.dst_vlan",
+      "flow.vlan_id",
+      "flow.next_hop",
+      "flow.next_hop_as",
+      "flow.src_as",
+      "flow.dst_as",
+      "flow.bgp_next_hop",
+      "flow.src_net",
+      "flow.dst_net",
+      "flow.forwarding_status",
+      "flow.observation_domain_id",
+      "flow.observation_point_id"
+    ],
+    "protocols": [
+      "netflow_v5",
+      "netflow_v9",
+      "ipfix"
+    ],
+    "cells": [
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 1,
+          "column": 1
+        },
+        "outcome": "**exact** `srcaddr`, 4 B; IPv4 only. IPv6 is a family-mismatch rejection.",
+        "outcome_sha256": "022f55cd6a6967149878c3a0a3f49c745a58c2c981cc8a1bef2fc285d08e9b4a",
+        "attribute": "source.address",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/source.address"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 1,
+          "column": 2
+        },
+        "outcome": "**exact** `IPV4_SRC_ADDR` (8), 4 B or `IPV6_SRC_ADDR` (27), 16 B; select from the parsed address family.",
+        "outcome_sha256": "88ee2c082bb708b92c183b79475af2e4dded55e21ea5ccad24de4b6be79caa21",
+        "attribute": "source.address",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/source.address"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 1,
+          "column": 3
+        },
+        "outcome": "**exact** `sourceIPv4Address` (8), 4 B or `sourceIPv6Address` (27), 16 B; select from the parsed address family.",
+        "outcome_sha256": "3a0b20f4d9615e745643af1ef121f64d658e656bbd7040985cf75ab1a1ffe9b0",
+        "attribute": "source.address",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/source.address"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 2,
+          "column": 1
+        },
+        "outcome": "**exact** `srcport`, 2 B; 0..65535 only.",
+        "outcome_sha256": "d7d20fff4684ed749e1050a826eca5c32dc43c67ed45d4f6284f61a224680d1e",
+        "attribute": "source.port",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/source.port"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 2,
+          "column": 2
+        },
+        "outcome": "**exact** `L4_SRC_PORT` (7), 2 B; 0..65535.",
+        "outcome_sha256": "8909d21e1614103eba45b35d4d08f1095712e8cd1afb6c61673395c84bb6cf56",
+        "attribute": "source.port",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/source.port"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 2,
+          "column": 3
+        },
+        "outcome": "**exact** `sourceTransportPort` (7), unsigned16, 2 B; 0..65535.",
+        "outcome_sha256": "e8a567c458b7ce2f47c7abddcf2b5d68c678410e73da9228158e33cde55197f1",
+        "attribute": "source.port",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/source.port"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 3,
+          "column": 1
+        },
+        "outcome": "**exact** `dstaddr`, 4 B; IPv4 only. IPv6 is a family-mismatch rejection.",
+        "outcome_sha256": "426a6f542139c0fd4953b8f2a4965ee07bf275261077c7756cd40fdc549c96a7",
+        "attribute": "destination.address",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/destination.address"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 3,
+          "column": 2
+        },
+        "outcome": "**exact** `IPV4_DST_ADDR` (12), 4 B or `IPV6_DST_ADDR` (28), 16 B; select from the parsed address family.",
+        "outcome_sha256": "606e78ee4db5f89fbda48b06d05dfdc7103e3714e826ca624da9af22ecc42211",
+        "attribute": "destination.address",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/destination.address"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 3,
+          "column": 3
+        },
+        "outcome": "**exact** `destinationIPv4Address` (12), 4 B or `destinationIPv6Address` (28), 16 B; select from the parsed address family.",
+        "outcome_sha256": "0ef8f18a7158cb18b5fec2b595a3b9fad5b3c60bdb904339270852d707d77275",
+        "attribute": "destination.address",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/destination.address"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 4,
+          "column": 1
+        },
+        "outcome": "**exact** `dstport`, 2 B; 0..65535 only.",
+        "outcome_sha256": "acdec9ab6713a2073d6cd5b510f598ac7ef2d0016042168ff5b2d40a7c7e1fde",
+        "attribute": "destination.port",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/destination.port"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 4,
+          "column": 2
+        },
+        "outcome": "**exact** `L4_DST_PORT` (11), 2 B; 0..65535.",
+        "outcome_sha256": "895a65e9350878ee6e16dda8b8b3632d4b603ae4e320e35712eddcaf28612e11",
+        "attribute": "destination.port",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/destination.port"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 4,
+          "column": 3
+        },
+        "outcome": "**exact** `destinationTransportPort` (11), unsigned16, 2 B; 0..65535.",
+        "outcome_sha256": "4b37f8c8a18e3b0b5c2c2411fbbf54bf8ac28c2e981350fe84e9fa2b6a8eff69",
+        "attribute": "destination.port",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/destination.port"
+      },
+      {
+        "classification": [
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 5,
+          "column": 1
+        },
+        "outcome": "**synthesized** `prot`, 1 B, only through an explicit configured token-to-IANA-number map; `unknown` or an absent map is unsupported (never infer a number).",
+        "outcome_sha256": "af6d7ac8677ca95bc084c0985dee77a30014042364a2af391c75c4ef31cc10fa",
+        "attribute": "network.transport",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/network.transport"
+      },
+      {
+        "classification": [
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 5,
+          "column": 2
+        },
+        "outcome": "**synthesized** `PROTOCOL` (4), 1 B under the same explicit map; parser names with no numeric identity are otherwise unsupported.",
+        "outcome_sha256": "cce96dd51fbde255e717c91409893f4cab61ca2a20444525dec7a194eec5ce27",
+        "attribute": "network.transport",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/network.transport"
+      },
+      {
+        "classification": [
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 5,
+          "column": 3
+        },
+        "outcome": "**synthesized** `protocolIdentifier` (4), unsigned8, 1 B under the same explicit map; no silent name/number recovery.",
+        "outcome_sha256": "63a1465da28a1b0aac8fbf2522036a1b5ccd9e6b3ee051a7a5fcc7aafadca337",
+        "attribute": "network.transport",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/network.transport"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 6,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: v5 records are fixed IPv4. A non-IPv4 address/family is rejected; the EtherType token is not copied.",
+        "outcome_sha256": "d1a1fb0d6703fac6ead44bd30f19a5b8134c9705230dccd288a3926e49ac6e84",
+        "attribute": "network.type",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/network.type"
+      },
+      {
+        "classification": [
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 6,
+          "column": 2
+        },
+        "outcome": "**synthesized** `IP_PROTOCOL_VERSION` (60), 1 B only for an explicit `ipv4`\u21924 or `ipv6`\u21926 map. Other EtherTypes and `unknown` are unsupported.",
+        "outcome_sha256": "468b5a5d4187ad36c5cf5153b7e46a42c1a80199d9c8bab875df96da46281e3a",
+        "attribute": "network.type",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/network.type"
+      },
+      {
+        "classification": [
+          "synthesized",
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 6,
+          "column": 3
+        },
+        "outcome": "**synthesized/unsupported** `ethernetType` (256), unsigned16, 2 B requires retained numeric L2 EtherType provenance; a lookup token alone is insufficient. When only an explicit IPv4/IPv6 family map is retained, use IE `ipVersion` (60), 1 B instead; never guess an EtherType. `unknown` is unsupported.",
+        "outcome_sha256": "b1cf0e4b2c2dad3836872eba6dd072c1efae3fc8741ff4afc278ae5921fa9706",
+        "attribute": "network.type",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/network.type"
+      },
+      {
+        "classification": [
+          "lossy",
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 7,
+          "column": 1
+        },
+        "outcome": "**lossy/unsupported (layer semantics; width-gated)** `dOctets`, 4 B; values above `2^32-1` reject. Cisco defines this as Layer-3 octets, but the canonical receiver value can originate from frame/data-link or direction-specific fields; without retained L3 provenance a required L3-only conversion is unsupported.",
+        "outcome_sha256": "2df20369686a17f3b85979d55a1cbcf23aa6800ea8a1a344920a084010768a89",
+        "attribute": "flow.io.bytes",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.io.bytes"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 7,
+          "column": 2
+        },
+        "outcome": "**lossy (direction/layer semantics unknown; width-gated)** a static template must choose `IN_BYTES` (1) or `OUT_BYTES` (23), each template length 4 B by RFC default; defaulting to IN_BYTES is explicit policy, not inference. Values above `2^32-1` reject; receiver IN/OUT overwrite and frame-vs-L3 meaning are canonical-source loss.",
+        "outcome_sha256": "67159f3534cd73faac9a42cf5a3e297dafcd90f4d38c1fa216c978140218815d",
+        "attribute": "flow.io.bytes",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.io.bytes"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 7,
+          "column": 3
+        },
+        "outcome": "**lossy (direction/layer semantics unknown)** a static template must choose `octetDeltaCount` (1) or `postOctetDeltaCount` (23), unsigned64, 8 B; defaulting to octetDeltaCount is explicit policy. Receiver direction/overwrite and frame-vs-L3 meaning remain source loss.",
+        "outcome_sha256": "eb907902c1b23f99fd7a698aee0999d073dd58cbf8492058a5d42c5107d0c755",
+        "attribute": "flow.io.bytes",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.io.bytes"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 8,
+          "column": 1
+        },
+        "outcome": "**exact (width-gated)** `dPkts`, 4 B; values above `2^32-1` reject.",
+        "outcome_sha256": "012535b963ed9784cf03690a01abe380dc0c5b34a27fe44300d52deae6729b58",
+        "attribute": "flow.io.packets",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.io.packets"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 8,
+          "column": 2
+        },
+        "outcome": "**lossy (direction unknown; width-gated)** a static template must choose `IN_PKTS` (2) or `OUT_PKTS` (24), each template length 4 B by RFC default; defaulting to IN_PKTS is explicit policy. Values above `2^32-1` reject; receiver IN/OUT overwrite remains source loss.",
+        "outcome_sha256": "96e7273d9dfa37d3f3f1304adf8e68325a18976e08a2c16c968e095e975cb579",
+        "attribute": "flow.io.packets",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.io.packets"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 8,
+          "column": 3
+        },
+        "outcome": "**lossy (direction unknown)** a static template must choose `packetDeltaCount` (2) or `postPacketDeltaCount` (24), unsigned64, 8 B; defaulting to packetDeltaCount is explicit policy. Source direction/overwrite ambiguity remains.",
+        "outcome_sha256": "a1f2e83bd6a05c53430bac88a3da6463ff49dcc529eb729484835918afc95d07",
+        "attribute": "flow.io.packets",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.io.packets"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 9,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: v5 header `version`, 2 B, is selected by the destination, never inferred from this token.",
+        "outcome_sha256": "2c5c33c41d9283c99e60b1da75232a968a69b8aa2b1b433ccb43151cce915f3e",
+        "attribute": "flow.type",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.type"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 9,
+          "column": 2
+        },
+        "outcome": "**inapplicable**: v9 header `Version`, 2 B, is selected by the destination, never inferred from this token.",
+        "outcome_sha256": "692241f50fa6fa8d7da67067257bcfd943583f58a6875e363e5225b968f2bf04",
+        "attribute": "flow.type",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.type"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 9,
+          "column": 3
+        },
+        "outcome": "**inapplicable**: IPFIX header `Version`, 2 B (value 10), is selected by the destination, never inferred from this token.",
+        "outcome_sha256": "567df7f09200fc9f9ee0e8af332f8a9069c54e444d529bb41a032bd1dabd1e22",
+        "attribute": "flow.type",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.type"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 10,
+          "column": 1
+        },
+        "outcome": "**inapplicable (header state)**: v5 header `flow_sequence`, 4 B, is maintained per destination and is never copied from the incoming record.",
+        "outcome_sha256": "c6058455d77a4f767c4dfa3c169d0174a44865265792bc878ebb7d880f58c116",
+        "attribute": "flow.sequence_num",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.sequence_num"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 10,
+          "column": 2
+        },
+        "outcome": "**inapplicable (header state)**: v9 header `Sequence Number`, 4 B, is maintained per destination and is never copied from the incoming record.",
+        "outcome_sha256": "886c2420eade595d22d0889ef70014aea424d68121258228b174b74b493911cf",
+        "attribute": "flow.sequence_num",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.sequence_num"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 10,
+          "column": 3
+        },
+        "outcome": "**inapplicable (header state)**: IPFIX header `Sequence Number`, 4 B, is maintained per stream/destination and is never copied from the incoming record.",
+        "outcome_sha256": "cfbe4a2e085f73deeaf2fdf72d95fddf9749618063b61f5354d9f6819f5c6c00",
+        "attribute": "flow.sequence_num",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.sequence_num"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 11,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no per-record receive-time field; v5 header `unix_secs` (4 B)/`unix_nsecs` (4 B) is exporter send time, not this value.",
+        "outcome_sha256": "727916843dd43b23260fcfae46c663a28dd9645508e8e5dd599b41afe0765c3d",
+        "attribute": "flow.time_received",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.time_received"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 11,
+          "column": 2
+        },
+        "outcome": "**inapplicable**: no per-record receive-time field; v9 header UNIX time (`UNIX Secs`, 4 B) is exporter send time.",
+        "outcome_sha256": "4f39b225358b968a278e56f3e580c6ffe4a7e881442911853688a7e0001b52eb",
+        "attribute": "flow.time_received",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.time_received"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 11,
+          "column": 3
+        },
+        "outcome": "**unsupported by default**: this is receiver-ingest time, not an observation-point time. An explicit opt-in may **synthesize** `observationTimeNanoseconds` (325), dateTimeNanoseconds, 8 B as a documented semantic substitution, with NTP quantization and 1900..2036 era rejection; do not silently substitute it.",
+        "outcome_sha256": "6052261b09bf557e7a46c5a3de34165de18ba4c5473fdfd72255b3eff79bcab2",
+        "attribute": "flow.time_received",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.time_received"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 12,
+          "column": 1
+        },
+        "outcome": "**lossy/synthesized (explicit origin)** v5 `First`, 4 B: with trusted, stable configured `uptime_origin` (UTC ns), encode `(flow.start - uptime_origin) / 1,000,000` elapsed milliseconds. Require `flow.start >= uptime_origin`, exact 1-ms alignment (non-aligned rejects), `flow.start <= flow.end`, elapsed <= `uint32`, no uptime rollover, and the packet-time inequality `0 <= First <= Last <= header_sysUpTime <= uint32 max` at construction. Without the origin, the fixed First field is unsupported and the record rejects; never infer boot time.",
+        "outcome_sha256": "1e4d4800badf1789838123fd12c2e8510f8fcd8b4311dc763156f2b6ef78e6f8",
+        "attribute": "flow.start",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.start"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 12,
+          "column": 2
+        },
+        "outcome": "**lossy/synthesized (explicit origin)** `FIRST_SWITCHED` (22), 4 B: use the same UTC-ns-to-integer-ms calculation, ordering/alignment/range/no-rollover checks, stable `uptime_origin`, and (when fields 21/22 are selected) `0 <= FIRST_SWITCHED <= LAST_SWITCHED <= header_sysUpTime <= uint32 max` at packet construction. Without origin the chosen template must omit fields 21/22; a shape requiring them is unsupported.",
+        "outcome_sha256": "e156680677b3e110b153702f59cb55fcac17f2f796e1f23ba08a3c0d7e8b2a86",
+        "attribute": "flow.start",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.start"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 12,
+          "column": 3
+        },
+        "outcome": "**lossy (timestamp precision/range)** `flowStartMilliseconds` (152), dateTimeMilliseconds, 8 B in general-v1 or explicit `flow_start_milliseconds`: floor canonical ns / 1,000,000 after original ordering validation. Legacy core-v1 and target-less explicit mapping retain `flowStartNanoseconds` (156), dateTimeNanoseconds, 8 B with NTP quantization and the 2036 era gate.",
+        "outcome_sha256": "10769ed7dcdcd3a74d31da540e85122c7cf3aa8bb5731ee57fad65ef97a82d2b",
+        "attribute": "flow.start",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.start"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 13,
+          "column": 1
+        },
+        "outcome": "**lossy/synthesized (explicit origin)** v5 `Last`, 4 B: with the same trusted stable `uptime_origin`, encode `(flow.end - uptime_origin) / 1,000,000` elapsed milliseconds. Require `flow.end >= uptime_origin`, exact 1-ms alignment (non-aligned rejects), `flow.start <= flow.end`, elapsed <= `uint32`, no uptime rollover, and the packet-time inequality `0 <= First <= Last <= header_sysUpTime <= uint32 max` at construction. Without origin, the fixed Last field is unsupported and the record rejects; never infer boot time.",
+        "outcome_sha256": "1dbf18cd0e6a42b4af89f8067695bdd0f745d296672ff83d2a69dffc018fde5f",
+        "attribute": "flow.end",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.end"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 13,
+          "column": 2
+        },
+        "outcome": "**lossy/synthesized (explicit origin)** `LAST_SWITCHED` (21), 4 B: use the same UTC-ns-to-integer-ms calculation, ordering/alignment/range/no-rollover checks, stable `uptime_origin`, and (when fields 21/22 are selected) `0 <= FIRST_SWITCHED <= LAST_SWITCHED <= header_sysUpTime <= uint32 max` at packet construction. Without origin the chosen template must omit fields 21/22; a shape requiring them is unsupported.",
+        "outcome_sha256": "096db2bdb4bab98a56158c8d2205f0bf39e9ac7a8bf5186f370aff9a47117854",
+        "attribute": "flow.end",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.end"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 13,
+          "column": 3
+        },
+        "outcome": "**lossy (timestamp precision/range)** `flowEndMilliseconds` (153), dateTimeMilliseconds, 8 B in general-v1 or explicit `flow_end_milliseconds`: floor canonical ns / 1,000,000 after original ordering validation. Legacy core-v1 and target-less explicit mapping retain `flowEndNanoseconds` (157), dateTimeNanoseconds, 8 B with NTP quantization and the 2036 era gate.",
+        "outcome_sha256": "c86a4ba84e3543132251dc4517998527afe2c1a4dd709e9be45596591f9f0d6a",
+        "attribute": "flow.end",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.end"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 14,
+          "column": 1
+        },
+        "outcome": "**lossy/synthesized (header-level)** v5 `sampling_interval`, 2 B: mode in the top two bits and a 14-bit interval. One common value is required for every record in a packet; differing values, values above 16383, or an unavailable mode reject that packet. Zero is preserved.",
+        "outcome_sha256": "1e1b1fd39ac4947d2395f41aba3c2f76122592cfc807e179934c3dc2d467f8d9",
+        "attribute": "flow.sampling_rate",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.sampling_rate"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 14,
+          "column": 2
+        },
+        "outcome": "**exact (width-gated)** `SAMPLING_INTERVAL` (34), 4 B; per-record values 0..`2^32-1`; larger values reject.",
+        "outcome_sha256": "74abc9c46c665699a28d85a9b788fcea22158357e059b089509b92bdc0a54712",
+        "attribute": "flow.sampling_rate",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.sampling_rate"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 14,
+          "column": 3
+        },
+        "outcome": "**exact (deprecated IE; width-gated)** `samplingInterval` (34), unsigned32, 4 B; larger values reject. IE 34 is deprecated; do not silently substitute `samplingPacketInterval` (305).",
+        "outcome_sha256": "49633e816e16f6ac7f6d98f0d3f6ed60580528bf1ad168c9f8cf07c44949008d",
+        "attribute": "flow.sampling_rate",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.sampling_rate"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 15,
+          "column": 1
+        },
+        "outcome": "**unsupported**: v5 has no sampler-address field; do not substitute source IP or exporter identity.",
+        "outcome_sha256": "a0e595b255e7f80a058d87b28c9348a536fda4a947793d42b3b43b8121a6b5fb",
+        "attribute": "flow.sampler_address",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.sampler_address"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 15,
+          "column": 2
+        },
+        "outcome": "**unsupported**: v9 has no sampler-address field; `FLOW_SAMPLER_ID` (48) is not an address.",
+        "outcome_sha256": "8b2ec48ed3991904747b7af0a591e37c35193d37352bc01143f1f05a5186cc9b",
+        "attribute": "flow.sampler_address",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.sampler_address"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 15,
+          "column": 3
+        },
+        "outcome": "**unsupported**: no sampler-address IE; `exporterIPv4Address`/`exporterIPv6Address` identify the exporter, not the sampler.",
+        "outcome_sha256": "1df88f3dffdf289369484ec79d1e49d84806d753e1a6ad6f3a7cc02898c1bea7",
+        "attribute": "flow.sampler_address",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.sampler_address"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 16,
+          "column": 1
+        },
+        "outcome": "**lossy (width-gated)** `tcp_flags`, 1 B; values above 255 reject (no truncation).",
+        "outcome_sha256": "194527e6797a290161c6cd64e099a90de7082daeb86cb620770b253c6f185d5b",
+        "attribute": "flow.tcp_flags",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.tcp_flags"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 16,
+          "column": 2
+        },
+        "outcome": "**lossy (width-gated)** `TCP_FLAGS` (6), 1 B; values above 255 reject.",
+        "outcome_sha256": "dfafad74ced54a42ad4bac16611818fd7e313616bfee56be4c562dbdf602f069",
+        "attribute": "flow.tcp_flags",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.tcp_flags"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 16,
+          "column": 3
+        },
+        "outcome": "**exact (width-gated)** `tcpControlBits` (6), unsigned16, 2 B; values above 65535 reject.",
+        "outcome_sha256": "c05739c92d89acaa7a79c371ab9591b47e2bcc5b64b6751d406c7e3e5a56e12c",
+        "attribute": "flow.tcp_flags",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.tcp_flags"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 17,
+          "column": 1
+        },
+        "outcome": "**lossy (width-gated)** `input`, 2 B; values above 65535 reject.",
+        "outcome_sha256": "cb059e9a53e8d72184c32c1faa7f1b7883481ca772de3937e9311ef475bc7003",
+        "attribute": "flow.in_if",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.in_if"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 17,
+          "column": 2
+        },
+        "outcome": "**lossy (width-gated)** `INPUT_SNMP` (10), template length 2 B (RFC default); values above 65535 reject.",
+        "outcome_sha256": "4d12cecf26754b0488920e13c45773cc25bf5fb2acd7523315772b42117a2d69",
+        "attribute": "flow.in_if",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.in_if"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 17,
+          "column": 3
+        },
+        "outcome": "**exact** `ingressInterface` (10), unsigned32, 4 B.",
+        "outcome_sha256": "935df77012741f472064b85dcf64f5efe5371ec5cf4705cea0f3dff2fd537141",
+        "attribute": "flow.in_if",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.in_if"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 18,
+          "column": 1
+        },
+        "outcome": "**lossy (width-gated)** `output`, 2 B; values above 65535 reject.",
+        "outcome_sha256": "7da99d1f177ce20e7546d1f6f2c3978ff7423bde75c72a06aa05e4b964718903",
+        "attribute": "flow.out_if",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.out_if"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 18,
+          "column": 2
+        },
+        "outcome": "**lossy (width-gated)** `OUTPUT_SNMP` (14), template length 2 B (RFC default); values above 65535 reject.",
+        "outcome_sha256": "07cecd96895a64d30ef0043e811d1858d88e976601fc97c7878b7111217a03f1",
+        "attribute": "flow.out_if",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.out_if"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 18,
+          "column": 3
+        },
+        "outcome": "**exact** `egressInterface` (14), unsigned32, 4 B.",
+        "outcome_sha256": "0523024fe7842212982ef5bb2497b9ec7255fec2816d7337a0d7afe0bce24fdb",
+        "attribute": "flow.out_if",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.out_if"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 19,
+          "column": 1
+        },
+        "outcome": "**exact** `tos`, 1 B; 0..255.",
+        "outcome_sha256": "179371f300bbd027bb1eb7469f1c6818fc78954956ef92446588cb4baa902903",
+        "attribute": "flow.ip_tos",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.ip_tos"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 19,
+          "column": 2
+        },
+        "outcome": "**exact** `SRC_TOS` (5), 1 B; 0..255.",
+        "outcome_sha256": "a35824b26190794ae26ffa47e1e6c12e90f309b2c89fe407bc09b1d4e78cb01c",
+        "attribute": "flow.ip_tos",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.ip_tos"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 19,
+          "column": 3
+        },
+        "outcome": "**exact** `ipClassOfService` (5), unsigned8, 1 B; 0..255.",
+        "outcome_sha256": "40754352067e69bed4d6bf1ea9f8196a2964d8842530302fe8d4808468de9b39",
+        "attribute": "flow.ip_tos",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.ip_tos"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 20,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 record field.",
+        "outcome_sha256": "bb2d46932a35f7f4cd58b0607062087d99e854ee2f04c7d4b1010995fcfa05d5",
+        "attribute": "flow.ip_ttl",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.ip_ttl"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 20,
+          "column": 2
+        },
+        "outcome": "**exact** registered NFv9 `MIN_TTL` (52), 1 B; 0..255, with zero preserved as the receiver sentinel.",
+        "outcome_sha256": "964de3b47cfbbd3654bea63c8544be2cd0f33e99458fb9545f92bd3b6603038d",
+        "attribute": "flow.ip_ttl",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.ip_ttl"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 20,
+          "column": 3
+        },
+        "outcome": "**exact** `minimumTTL` (52), unsigned8, 1 B; 0..255, with zero preserved.",
+        "outcome_sha256": "db2426b572d847ba7307ca2aa13dcd889c3dc36159d5fc2c970bdc20e41dd4b9",
+        "attribute": "flow.ip_ttl",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.ip_ttl"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 21,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 record field.",
+        "outcome_sha256": "bb2d46932a35f7f4cd58b0607062087d99e854ee2f04c7d4b1010995fcfa05d5",
+        "attribute": "flow.ip_flags",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.ip_flags"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 21,
+          "column": 2
+        },
+        "outcome": "**inapplicable**: RFC 3954/v9 has no standard IP-fragment-flags field.",
+        "outcome_sha256": "8310919efe310dd8af720f4ac4a6af46e34422b2556de2ba1c34dc113e01bcda",
+        "attribute": "flow.ip_flags",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.ip_flags"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 21,
+          "column": 3
+        },
+        "outcome": "**lossy/synthesized (IPFIX-origin only)** `fragmentFlags` (197), unsigned8, 1 B. Require explicit input provenance `flow.type=ipfix` and canonical values 0..3 for source IPv4 or 0..1 for source IPv6, then invert the pinned decoder's shift with `wire = v << 5`. IANA IE197 requires the reserved flag to be zero for both families and DF to be zero for IPv6; invalid values reject without masking or truncation. Valid IPv4 values 0/1/2/3 encode as `0x00`/`0x20`/`0x40`/`0x60`; IPv6 0/1 encode as `0x00`/`0x20`. Packet-derived NetFlow/sFlow bits have origin-specific layouts and no generic inverse, so they remain unsupported. The decoder-discarded don't-care bits cannot be restored.",
+        "outcome_sha256": "2eeac67bb023807d1469c8f9fae25573a7591cd4b7a0a2411ff6c7ef443da69b",
+        "attribute": "flow.ip_flags",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.ip_flags"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 22,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 record field.",
+        "outcome_sha256": "bb2d46932a35f7f4cd58b0607062087d99e854ee2f04c7d4b1010995fcfa05d5",
+        "attribute": "flow.fragment_id",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.fragment_id"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 22,
+          "column": 2
+        },
+        "outcome": "**exact (IPv4 only)** `IPV4_IDENT` (54), 4 B; an IPv6 family mismatch rejects a required conversion.",
+        "outcome_sha256": "952906cc4f7f33ee9a3b9c5eee366ee33c4ceca3e340ad9b1db644a218b1fd6e",
+        "attribute": "flow.fragment_id",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.fragment_id"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 22,
+          "column": 3
+        },
+        "outcome": "**exact** `fragmentIdentification` (54), unsigned32, 4 B; applies to IPv4 or IPv6, with zero retained.",
+        "outcome_sha256": "60cedfa2779307fbb2a355d99bb85c8736b648e1b9e7daacf075d700b312470d",
+        "attribute": "flow.fragment_id",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.fragment_id"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 23,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 record field.",
+        "outcome_sha256": "bb2d46932a35f7f4cd58b0607062087d99e854ee2f04c7d4b1010995fcfa05d5",
+        "attribute": "flow.fragment_offset",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.fragment_offset"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 23,
+          "column": 2
+        },
+        "outcome": "**exact (range-gated)** `FRAGMENT_OFFSET` (88), 2 B; registry range 0..0x1fff, larger values reject.",
+        "outcome_sha256": "164531f3dabc1a7e13287bc1e0df11242402de5d020cd6368fc67e3c6f12ae41",
+        "attribute": "flow.fragment_offset",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.fragment_offset"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 23,
+          "column": 3
+        },
+        "outcome": "**exact (range-gated)** `fragmentOffset` (88), unsigned16, 2 B; registry range 0..0x1fff, larger values reject.",
+        "outcome_sha256": "1416aada968f0c2801aa1cd092375d406803d12e3ec8ad2145a266715e615d79",
+        "attribute": "flow.fragment_offset",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.fragment_offset"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 24,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 record field.",
+        "outcome_sha256": "bb2d46932a35f7f4cd58b0607062087d99e854ee2f04c7d4b1010995fcfa05d5",
+        "attribute": "flow.ipv6_flow_label",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.ipv6_flow_label"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 24,
+          "column": 2
+        },
+        "outcome": "**exact (IPv6 only)** `IPV6_FLOW_LABEL` (31), 3 B; value must be 0..0xfffff and an IPv6 flow, otherwise the field is inapplicable.",
+        "outcome_sha256": "20066b994c1541f7ed8dbeffe614fb3b8d7563a6e9ee4edf305f25865906a75b",
+        "attribute": "flow.ipv6_flow_label",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.ipv6_flow_label"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 24,
+          "column": 3
+        },
+        "outcome": "**exact (IPv6 only)** `flowLabelIPv6` (31), unsigned32, 4 B; value must be 0..0xfffff and an IPv6 flow.",
+        "outcome_sha256": "ccb41363e81c7d5e6fc2bf952b4a9cf97bb3f770d11d4b9cb406bd42c96494f8",
+        "attribute": "flow.ipv6_flow_label",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.ipv6_flow_label"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 25,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 ICMP field.",
+        "outcome_sha256": "dc2a22d20b4f31eedf8a08e81941fd640ee7d860bc1149accfee6cdbc88ff086",
+        "attribute": "flow.icmp_type",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.icmp_type"
+      },
+      {
+        "classification": [
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 25,
+          "column": 2
+        },
+        "outcome": "**synthesized (IPv4/protocol 1 only)** with `ICMP_TYPE` (32), 2 B: require IPv4 addresses, an explicit protocol-number mapping to ICMP (1), and both type/code; encode `(type << 8) | code`. ICMPv6 has no RFC 3954 field and is unsupported.",
+        "outcome_sha256": "da1d0e4a8fa43604e72663a7351535617f8be18dd29bb5534162d6849e7beaa6",
+        "attribute": "flow.icmp_type",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.icmp_type"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 25,
+          "column": 3
+        },
+        "outcome": "**exact (family/protocol-gated)** `icmpTypeIPv4` (176) or `icmpTypeIPv6` (178), unsigned8, 1 B; require matching address family and ICMP protocol.",
+        "outcome_sha256": "3f97f050c11fdb3f1a435979e96ca349578381d6af637540eaaa4b63613b70a9",
+        "attribute": "flow.icmp_type",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.icmp_type"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 26,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 ICMP field.",
+        "outcome_sha256": "dc2a22d20b4f31eedf8a08e81941fd640ee7d860bc1149accfee6cdbc88ff086",
+        "attribute": "flow.icmp_code",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.icmp_code"
+      },
+      {
+        "classification": [
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 26,
+          "column": 2
+        },
+        "outcome": "**synthesized (IPv4/protocol 1 only)** with `ICMP_TYPE` (32), 2 B: the low byte is code; require IPv4 addresses, type/code 0..255, and protocol 1. ICMPv6 is unsupported absent a sourced extension.",
+        "outcome_sha256": "c0b28cd8eac04105934bc8f576d84b5c7fd6aebb07e92ea451a3bd7868e2c83b",
+        "attribute": "flow.icmp_code",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.icmp_code"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 26,
+          "column": 3
+        },
+        "outcome": "**exact (family/protocol-gated)** `icmpCodeIPv4` (177) or `icmpCodeIPv6` (179), unsigned8, 1 B; require matching address family and ICMP protocol.",
+        "outcome_sha256": "617f7bb558c8be0dff10a375f36038cdcfa4b9476ed17db5e8dec0f9619c0077",
+        "attribute": "flow.icmp_code",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.icmp_code"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 27,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 MAC fields.",
+        "outcome_sha256": "d892275d7b220463fa088ebac372d2a5d4cfd1714709d336c8009ecc6040c167",
+        "attribute": "flow.src_mac",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.src_mac"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 27,
+          "column": 2
+        },
+        "outcome": "**exact** `SRC_MAC` (56), 6 B; canonical six-octet value only.",
+        "outcome_sha256": "a3a50340a5244c840b3bbb4f5c02c5c3bf84c041566f3b9e60793901a34d1831",
+        "attribute": "flow.src_mac",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.src_mac"
+      },
+      {
+        "classification": [
+          "lossy",
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 27,
+          "column": 3
+        },
+        "outcome": "**lossy/unsupported (pre/post direction collapsed)** a static mapping must choose `sourceMacAddress` (56) or `postSourceMacAddress` (81), macAddress, 6 B; the canonical key does not retain pre/post direction, so no unconditional exact mapping is claimed.",
+        "outcome_sha256": "a6791f40c165112140d1c0c9aa9d0d58f38880b1b6f41ccab6c2a788f5d1e95b",
+        "attribute": "flow.src_mac",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.src_mac"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 28,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 MAC fields.",
+        "outcome_sha256": "d892275d7b220463fa088ebac372d2a5d4cfd1714709d336c8009ecc6040c167",
+        "attribute": "flow.dst_mac",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.dst_mac"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 28,
+          "column": 2
+        },
+        "outcome": "**exact** `DST_MAC` (57), 6 B; canonical six-octet value only.",
+        "outcome_sha256": "f1d2b561bbf1a10b14ef99cff5437a17d72b4774cce6a6f49849801ca4823ad7",
+        "attribute": "flow.dst_mac",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.dst_mac"
+      },
+      {
+        "classification": [
+          "lossy",
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 28,
+          "column": 3
+        },
+        "outcome": "**lossy/unsupported (pre/post direction collapsed)** a static mapping must choose `destinationMacAddress` (80) or `postDestinationMacAddress` (57), macAddress, 6 B; IE 57 is not a generic exact destination mapping without retained direction provenance.",
+        "outcome_sha256": "1cc34f5e39cd38326280ff66da829813055095e8214c7fca2354f305938ee64e",
+        "attribute": "flow.dst_mac",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.dst_mac"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 29,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 VLAN fields.",
+        "outcome_sha256": "797e05b2ccbb285d5f1e3f23943d38553b43eb1bd821915bed9361650dd49d14",
+        "attribute": "flow.src_vlan",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.src_vlan"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 29,
+          "column": 2
+        },
+        "outcome": "**exact** `SRC_VLAN` (58), 2 B; 0..4095.",
+        "outcome_sha256": "10a8204cdbf22097d74a3bf22f551e2ad36ae526462ff53c9f491acb674eb2f8",
+        "attribute": "flow.src_vlan",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.src_vlan"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 29,
+          "column": 3
+        },
+        "outcome": "**exact** `vlanId` (58), unsigned16, 2 B; 0..4095.",
+        "outcome_sha256": "19d00552d2587e23b0f3cf9d80e2590ac7124432d35f1096cca551bbae3081e9",
+        "attribute": "flow.src_vlan",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.src_vlan"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 30,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 VLAN fields.",
+        "outcome_sha256": "797e05b2ccbb285d5f1e3f23943d38553b43eb1bd821915bed9361650dd49d14",
+        "attribute": "flow.dst_vlan",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.dst_vlan"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 30,
+          "column": 2
+        },
+        "outcome": "**exact** `DST_VLAN` (59), 2 B; 0..4095.",
+        "outcome_sha256": "db099aa22885e299a745a7fabc348951a50dc9f8f5c58edfca6c80e8a8357b6a",
+        "attribute": "flow.dst_vlan",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.dst_vlan"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 30,
+          "column": 3
+        },
+        "outcome": "**exact** `postVlanId` (59), unsigned16, 2 B; 0..4095.",
+        "outcome_sha256": "d3369e5ddef5e36f043141ae01fe6468934b1df3ae210b5b7dc216c6ccba3d3e",
+        "attribute": "flow.dst_vlan",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.dst_vlan"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 31,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 VLAN fields.",
+        "outcome_sha256": "797e05b2ccbb285d5f1e3f23943d38553b43eb1bd821915bed9361650dd49d14",
+        "attribute": "flow.vlan_id",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.vlan_id"
+      },
+      {
+        "classification": [
+          "lossy",
+          "synthesized"
+        ],
+        "matrix_ref": {
+          "row": 31,
+          "column": 2
+        },
+        "outcome": "**lossy/synthesized** `SRC_VLAN` (58), 2 B, as the only generic v9 slot; source/destination direction distinction is lost.",
+        "outcome_sha256": "1e518c2e8fea0966622721e722c4197b8809ca4ba93186785ecd59e3e5927c64",
+        "attribute": "flow.vlan_id",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.vlan_id"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 31,
+          "column": 3
+        },
+        "outcome": "**exact** `vlanId` (58), unsigned16, 2 B; the canonical generic ID may coexist with `flow.src_vlan`.",
+        "outcome_sha256": "57a0bfa07aeca5984339ab70fefd5994e796daf64083609d081a31f998c146fd",
+        "attribute": "flow.vlan_id",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.vlan_id"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 32,
+          "column": 1
+        },
+        "outcome": "**exact (fixed IPv4; required)** `nexthop`, 4 B; missing, invalid, or non-IPv4 values reject the record (never omit the field).",
+        "outcome_sha256": "a64c834abb4a3f9cb99a42c3b6106e3d2cbf57f18e16cb235f1a4f1608f83a84",
+        "attribute": "flow.next_hop",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.next_hop"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 32,
+          "column": 2
+        },
+        "outcome": "**exact (family-selected)** `IPV4_NEXT_HOP` (15), 4 B or `IPV6_NEXT_HOP` (62), 16 B; optional key may be omitted.",
+        "outcome_sha256": "e51bcda60b96627337edca49a8555df40e653c1008b52aa0bba151f196b01d19",
+        "attribute": "flow.next_hop",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.next_hop"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 32,
+          "column": 3
+        },
+        "outcome": "**exact (family-selected)** `ipNextHopIPv4Address` (15), 4 B or `ipNextHopIPv6Address` (62), 16 B; optional key may be omitted.",
+        "outcome_sha256": "dd225cfa997edc987cf1ed44704936325d54cffb5a95586fdbe37432f92b645d",
+        "attribute": "flow.next_hop",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.next_hop"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 33,
+          "column": 1
+        },
+        "outcome": "**unsupported**: no v5 field.",
+        "outcome_sha256": "f727fb7a58cea6167f8f8b4ece5fa29c4bf86b06eab8a8f8af9d8ef9bf2c4d3b",
+        "attribute": "flow.next_hop_as",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.next_hop_as"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 33,
+          "column": 2
+        },
+        "outcome": "**unsupported**: no v9 field with this semantic.",
+        "outcome_sha256": "4fa76cac116025d685260ceb1915e5669e4557c93da3f6315c39ebb1d5f1cc72",
+        "attribute": "flow.next_hop_as",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.next_hop_as"
+      },
+      {
+        "classification": [
+          "unsupported"
+        ],
+        "matrix_ref": {
+          "row": 33,
+          "column": 3
+        },
+        "outcome": "**unsupported**: `bgpNextAdjacentAsNumber` (128) is adjacent-AS, not the receiver's next-hop AS; it is not substituted.",
+        "outcome_sha256": "33ab7b0aada04607f7a5dea4ce3db61ee7b567d2fba5575d1885954d5fbd0aa6",
+        "attribute": "flow.next_hop_as",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.next_hop_as"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 34,
+          "column": 1
+        },
+        "outcome": "**lossy (width-gated)** `src_as`, 2 B; values above 65535 reject.",
+        "outcome_sha256": "4b7c3a83e0b5b9188a7bbc5341fd72bd4f86daf6b995b4021b1d736830501196",
+        "attribute": "flow.src_as",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.src_as"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 34,
+          "column": 2
+        },
+        "outcome": "**exact** `SRC_AS` (16), template length 4 B (the RFC permits 2 or 4); 0..`2^32-1`.",
+        "outcome_sha256": "7794411d54c67f54700a078f2d0acbbb90582124530a0f482e39dee7d9115351",
+        "attribute": "flow.src_as",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.src_as"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 34,
+          "column": 3
+        },
+        "outcome": "**exact** `bgpSourceAsNumber` (16), unsigned32, 4 B.",
+        "outcome_sha256": "3081696e645329ffe7b7ceaafb929045be18ed35aecfeb6c9132848ea78afd5a",
+        "attribute": "flow.src_as",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.src_as"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 35,
+          "column": 1
+        },
+        "outcome": "**lossy (width-gated)** `dst_as`, 2 B; values above 65535 reject.",
+        "outcome_sha256": "1d73f7e75ad2b091add2f7bd3d2be837f4a8dba09c4d6d5c262fcef5cfb6f53e",
+        "attribute": "flow.dst_as",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.dst_as"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 35,
+          "column": 2
+        },
+        "outcome": "**exact** `DST_AS` (17), template length 4 B; 0..`2^32-1`.",
+        "outcome_sha256": "e68a7c6797ab6089c729451e665a959630385af6dcccd9e7883c48597b1a2d6a",
+        "attribute": "flow.dst_as",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.dst_as"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 35,
+          "column": 3
+        },
+        "outcome": "**exact** `bgpDestinationAsNumber` (17), unsigned32, 4 B.",
+        "outcome_sha256": "fa051fd71d65cc7f0980fc0211e1596faab33678c8ef254378df60dacf964db2",
+        "attribute": "flow.dst_as",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.dst_as"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 36,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 BGP next-hop field.",
+        "outcome_sha256": "9ccefdc34646b2cee66f4365ea1cb1d69a1e526f04a76ac3c8ea89e7ffe9ae76",
+        "attribute": "flow.bgp_next_hop",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.bgp_next_hop"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 36,
+          "column": 2
+        },
+        "outcome": "**exact (family-selected)** `BGP_IPV4_NEXT_HOP` (18), 4 B or `BGP_IPV6_NEXT_HOP` (63), 16 B; optional key may be omitted.",
+        "outcome_sha256": "29159a3c8b2fbec405fa374037de43dc604b7dfedbf7bfd97b1f3ef2d5b296ef",
+        "attribute": "flow.bgp_next_hop",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.bgp_next_hop"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 36,
+          "column": 3
+        },
+        "outcome": "**exact (family-selected)** `bgpNextHopIPv4Address` (18), 4 B or `bgpNextHopIPv6Address` (63), 16 B; optional key may be omitted.",
+        "outcome_sha256": "6275f6f13eedf42709923801a7329933d75bda0d6b08fee36b2e19cd0a0aaaa3",
+        "attribute": "flow.bgp_next_hop",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.bgp_next_hop"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 37,
+          "column": 1
+        },
+        "outcome": "**exact (IPv4 only)** `src_mask`, 1 B, 0..32; an IPv6 family mismatch rejects a required conversion.",
+        "outcome_sha256": "19fc40212b46b5b3d9dd2814d9cfffc7f3ca1468ba19a95d8dd5fac717556375",
+        "attribute": "flow.src_net",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.src_net"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 37,
+          "column": 2
+        },
+        "outcome": "**exact (family-selected)** `SRC_MASK` (9), 1 B for IPv4 or `IPV6_SRC_MASK` (29), 1 B for IPv6; 0..32/128 respectively.",
+        "outcome_sha256": "031acfe1a8bae71da79c92812b62fd238cd06c718e25aa05600d0095f6d0da28",
+        "attribute": "flow.src_net",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.src_net"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 37,
+          "column": 3
+        },
+        "outcome": "**exact (family-selected)** `sourceIPv4PrefixLength` (9), unsigned8, 1 B (0..32) or `sourceIPv6PrefixLength` (29), unsigned8, 1 B (0..128).",
+        "outcome_sha256": "58df70d139626f241334fe61edf033ff4484b7c13c1a715edd718f1daae8da14",
+        "attribute": "flow.src_net",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.src_net"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 38,
+          "column": 1
+        },
+        "outcome": "**exact (IPv4 only)** `dst_mask`, 1 B, 0..32; an IPv6 family mismatch rejects a required conversion.",
+        "outcome_sha256": "d96d69c5173da5b823eaf3aef8528e3579973a3cdffb72eaaceb0128fa760dc5",
+        "attribute": "flow.dst_net",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.dst_net"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 38,
+          "column": 2
+        },
+        "outcome": "**exact (family-selected)** `DST_MASK` (13), 1 B for IPv4 or `IPV6_DST_MASK` (30), 1 B for IPv6; 0..32/128 respectively.",
+        "outcome_sha256": "dc5598b3f354dd7ce1e68d0f2d804c41f770df1772fa6085be1c72980aa8fe79",
+        "attribute": "flow.dst_net",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.dst_net"
+      },
+      {
+        "classification": [
+          "exact"
+        ],
+        "matrix_ref": {
+          "row": 38,
+          "column": 3
+        },
+        "outcome": "**exact (family-selected)** `destinationIPv4PrefixLength` (13), unsigned8, 1 B (0..32) or `destinationIPv6PrefixLength` (30), unsigned8, 1 B (0..128).",
+        "outcome_sha256": "806a9dddcafcb418a0663e35e5d385cb27288195281488309df4cdfbb46df43c",
+        "attribute": "flow.dst_net",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.dst_net"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 39,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 forwarding-status field.",
+        "outcome_sha256": "f64167b8152f3ef35a49bf5bd7a86325f71695577a61e4a6b01388f3ddd84876",
+        "attribute": "flow.forwarding_status",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.forwarding_status"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 39,
+          "column": 2
+        },
+        "outcome": "**lossy (current one-byte profile)** `FORWARDING_STATUS` (89), 1 B; values above 255 reject.",
+        "outcome_sha256": "13bf187a01aad295df3175312f2aeb835c5dccde4dd3141ecead995a60575067",
+        "attribute": "flow.forwarding_status",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.forwarding_status"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 39,
+          "column": 3
+        },
+        "outcome": "**lossy (current one-byte profile)** `forwardingStatus` (89), reduced-size length 1 B; values above 255 reject. The registry describes future bits but the current status is one byte.",
+        "outcome_sha256": "c9fc2706add8ae2378b84a6831cc0cd5c7cc9285da78fa9d8b2b07c5fab08636",
+        "attribute": "flow.forwarding_status",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.forwarding_status"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 40,
+          "column": 1
+        },
+        "outcome": "**inapplicable (header-only)**: v5 has no domain field; destination identity is configured.",
+        "outcome_sha256": "d68e02eca800d9c6c44f073b458789b7516ca03eddbee2de9cca4873539b89c3",
+        "attribute": "flow.observation_domain_id",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.observation_domain_id"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 40,
+          "column": 2
+        },
+        "outcome": "**inapplicable (header-only)**: v9 `Source ID`, 4 B, is a configured outbound header value, never the incoming attribute.",
+        "outcome_sha256": "25a5f3a920d8e4626ab2b40f732de6a1e555739a744bf349ce837e908d9754c4",
+        "attribute": "flow.observation_domain_id",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.observation_domain_id"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 40,
+          "column": 3
+        },
+        "outcome": "**inapplicable (header-only)**: IPFIX header Observation Domain ID, 4 B, is configured per destination; never copy the incoming attribute.",
+        "outcome_sha256": "461b701b759a16b2d43d9c7bba16458ad2f03318f49fff0f7f52161278360c06",
+        "attribute": "flow.observation_domain_id",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.observation_domain_id"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 41,
+          "column": 1
+        },
+        "outcome": "**inapplicable**: no v5 field.",
+        "outcome_sha256": "d29ba725344733c61e024f3438ab9692de13b32137500343b25d95f20edaa15b",
+        "attribute": "flow.observation_point_id",
+        "protocol": "netflow_v5",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v5/flow.observation_point_id"
+      },
+      {
+        "classification": [
+          "inapplicable"
+        ],
+        "matrix_ref": {
+          "row": 41,
+          "column": 2
+        },
+        "outcome": "**inapplicable**: no v9 field; do not conflate it with Source ID.",
+        "outcome_sha256": "8100f5277db59fc83cb48626c8a90fc292d57a9fb6b378f6319f13c6deec5a0a",
+        "attribute": "flow.observation_point_id",
+        "protocol": "netflow_v9",
+        "test_id": "integration/mapping:TestManifestCoverage/netflow_v9/flow.observation_point_id"
+      },
+      {
+        "classification": [
+          "lossy"
+        ],
+        "matrix_ref": {
+          "row": 41,
+          "column": 3
+        },
+        "outcome": "**lossy (canonical source already truncated)** `observationPointId` (138), unsigned64, 8 B; zero-extend the retained uint32. The original IPFIX value above uint32 was irreversibly lost by goflow2 before OTel normalization.",
+        "outcome_sha256": "6284c69b45746a666deea4d787bedcec7b8a8b693ec11703b20782d0e20c3c69",
+        "attribute": "flow.observation_point_id",
+        "protocol": "ipfix",
+        "test_id": "integration/mapping:TestManifestCoverage/ipfix/flow.observation_point_id"
+      }
+    ],
+    "fingerprint": "8b890b8dd63790803dcd7f350a39867eae6d19ca2ecf438540a41160dc1d114a"
+  },
+  "extras": {
+    "custom_ipfix_enterprise": {
+      "test_id": "internal/mapping:TestCustom"
+    },
+    "v9_private": {
+      "test_id": "internal/mapping:TestCustom"
+    },
+    "raw_body_rejection": {
+      "test_id": "internal/normalize:TestMalformed"
+    },
+    "unknown_unselected_traversal": {
+      "test_id": "internal/normalize:TestPreflightIgnoresIrrelevantMetadata"
+    }
+  }
+}

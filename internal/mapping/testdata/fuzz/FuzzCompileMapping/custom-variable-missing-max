@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("custom-variable-missing-max")
+uint8(37)
+uint8(0)
+uint64(0)

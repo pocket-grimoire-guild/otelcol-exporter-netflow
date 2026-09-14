@@ -1,0 +1,6 @@
+go test fuzz v1
+uint8(4)
+uint8(2)
+int64(0)
+string("TCP")
+bool(false)

@@ -1,0 +1,19 @@
+# Versioned external-consumer manifest. The alpha version is intentionally
+# unpublished; publish the reviewed source and tag before using a public proxy.
+dist:
+  module: github.com/pocket-grimoire-guild/otelcol-exporter-netflow/distribution/consumer
+  name: otel-netflow-collector
+  description: OpenTelemetry Collector with the NetFlow exporter
+  version: 0.1.0-alpha.1
+  output_path: ./dist/ocb
+receivers:
+  - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/netflowreceiver v0.160.0
+exporters:
+  - gomod: github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.1.0-alpha.1
+    name: netflowexporter
+providers:
+  - gomod: go.opentelemetry.io/collector/confmap/provider/envprovider v1.66.0
+  - gomod: go.opentelemetry.io/collector/confmap/provider/fileprovider v1.66.0
+telemetry:
+  gomod: go.opentelemetry.io/collector/service v0.160.0
+  import: go.opentelemetry.io/collector/service/telemetry/otelconftelemetry

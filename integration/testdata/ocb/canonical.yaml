@@ -1,0 +1,12 @@
+{
+  "description": "JSON-form YAML; every input references the existing golden manifest. Receiver projection is documented in distribution/ocb/README.md.",
+  "cases": [
+    {"protocol": "v5", "golden": "canonical-ipv4-v1.bin", "records": 1, "ipv6": false},
+    {"protocol": "v9", "golden": "canonical-ipv4-v1.bin", "records": 1, "ipv6": false},
+    {"protocol": "v9", "golden": "canonical-ipv6-v1.bin", "records": 1, "ipv6": true},
+    {"protocol": "v9", "golden": "sampling-ie34-two-distinct-rates-v1.bin", "records": 2, "ipv6": false},
+    {"protocol": "ipfix", "golden": "canonical-ipv4-v1.bin", "records": 1, "ipv6": false},
+    {"protocol": "ipfix", "golden": "canonical-ipv6-v1.bin", "records": 1, "ipv6": true},
+    {"protocol": "ipfix", "golden": "sampling-ie34-two-distinct-rates-v1.bin", "records": 2, "ipv6": false}
+  ]
+}

@@ -1,0 +1,434 @@
+type: netflow
+display_name: NetFlow Exporter
+description: Exports receiver-compatible flow records from OpenTelemetry logs as NetFlow v5, NetFlow v9, or IPFIX over UDP.
+status:
+  class: exporter
+  stability:
+    alpha: [logs]
+  codeowners:
+    active: [traytonwhite]
+tests:
+  expect_consumer_error: true
+  config:
+    endpoint: 127.0.0.1:4739
+    protocol: netflow_v5
+    identity:
+      engine_type: 0
+      engine_id: 0
+    uptime_origin: 1788220800000000000
+    mapping:
+      profile: contrib-netflowreceiver-v0.160.0/netflow-v5-fixed-v1
+      protocol_identifiers:
+        - {token: tcp, number: 6}
+      input_guarantees: {flow_io_bytes: layer3_total_octets}
+      loss_policy: encode_and_count
+
+config:
+  type: object
+  description: Configuration for the NetFlow and IPFIX logs exporter.
+  properties:
+    endpoint:
+      type: string
+      description: UDP destination in host:port form.
+      minLength: 1
+      maxLength: 512
+    protocol:
+      type: string
+      description: Wire protocol emitted by the exporter.
+      enum: [netflow_v5, netflow_v9, ipfix]
+    schema:
+      type: string
+      description: Pinned receiver schema used by the mapping contract.
+      enum: [contrib-netflowreceiver-v0.160.0]
+      default: contrib-netflowreceiver-v0.160.0
+    identity:
+      type: object
+      description: Protocol-specific exporter identity values.
+      minProperties: 1
+      properties:
+        observation_domain_id:
+          type: uint32
+          x-pointer: true
+          minimum: 0
+          maximum: 4294967295
+        source_id:
+          type: uint32
+          x-pointer: true
+          minimum: 0
+          maximum: 4294967295
+        engine_type:
+          type: uint8
+          x-pointer: true
+          minimum: 0
+          maximum: 255
+        engine_id:
+          type: uint8
+          x-pointer: true
+          minimum: 0
+          maximum: 255
+        sampling_mode:
+          type: uint8
+          x-pointer: true
+          minimum: 0
+          maximum: 3
+    mapping:
+      type: object
+      description: Explicit profile or field mapping and its loss policy.
+      properties:
+        profile:
+          type: string
+          description: Built-in mapping profile. Use fields instead for an explicit mapping.
+          enum:
+            - contrib-netflowreceiver-v0.160.0/netflow-v5-fixed-v1
+            - contrib-netflowreceiver-v0.160.0/netflow-v9-core-v1
+            - contrib-netflowreceiver-v0.160.0/netflow-v9-timed-v1
+            - contrib-netflowreceiver-v0.160.0/ipfix-core-v1
+            - contrib-netflowreceiver-v0.160.0/ipfix-general-v1
+          minLength: 1
+        fields:
+          type: slice
+          description: Ordered canonical fields for an explicit mapping.
+          minItems: 1
+          maxItems: 64
+          values:
+            type: object
+            properties:
+              canonical:
+                type: string
+                description: Exact canonical receiver field name.
+                enum:
+                  - source.address
+                  - source.port
+                  - destination.address
+                  - destination.port
+                  - network.transport
+                  - network.type
+                  - flow.io.bytes
+                  - flow.io.packets
+                  - flow.type
+                  - flow.sequence_num
+                  - flow.time_received
+                  - flow.start
+                  - flow.end
+                  - flow.sampling_rate
+                  - flow.sampler_address
+                  - flow.tcp_flags
+                  - flow.in_if
+                  - flow.out_if
+                  - flow.ip_tos
+                  - flow.ip_ttl
+                  - flow.ip_flags
+                  - flow.fragment_id
+                  - flow.fragment_offset
+                  - flow.ipv6_flow_label
+                  - flow.icmp_type
+                  - flow.icmp_code
+                  - flow.src_mac
+                  - flow.dst_mac
+                  - flow.src_vlan
+                  - flow.dst_vlan
+                  - flow.vlan_id
+                  - flow.next_hop
+                  - flow.next_hop_as
+                  - flow.src_as
+                  - flow.dst_as
+                  - flow.bgp_next_hop
+                  - flow.src_net
+                  - flow.dst_net
+                  - flow.forwarding_status
+                  - flow.observation_domain_id
+                  - flow.observation_point_id
+                  - flow.icmp_type_code
+                minLength: 1
+              target:
+                type: string
+                description: Protocol-specific target for an ambiguous field.
+            required: [canonical]
+        protocol_identifiers:
+          type: slice
+          description: Exact receiver network.transport token to protocol number mappings.
+          maxItems: 32
+          values:
+            type: object
+            properties:
+              token:
+                type: string
+                minLength: 1
+              number:
+                type: uint8
+                minimum: 0
+                maximum: 255
+            required: [token, number]
+        network_type_versions:
+          type: slice
+          description: Exact receiver network.type token to IP version mappings.
+          maxItems: 2
+          values:
+            type: object
+            properties:
+              token:
+                type: string
+                enum: [ipv4, ipv6]
+                minLength: 1
+              version:
+                type: uint8
+                enum: [4, 6]
+            required: [token, version]
+        input_guarantees:
+          type: object
+          description: Provenance assertions required for selected lossy fields.
+          properties:
+            flow_io_bytes:
+              type: string
+              enum: ["", layer3_total_octets]
+        loss_policy:
+          type: string
+          description: Policy for explicitly documented mapping loss.
+          enum: [encode_and_count, reject]
+        custom:
+          type: slice
+          description: Protocol-specific v9 private or IPFIX enterprise fields.
+          maxItems: 32
+          values:
+            type: object
+            properties:
+              source:
+                type: string
+                minLength: 1
+                maxLength: 1024
+              pen:
+                type: uint32
+                x-pointer: true
+                minimum: 1
+                maximum: 4294967295
+              element_id:
+                type: uint32
+                x-pointer: true
+                minimum: 1
+                maximum: 32767
+              field_type:
+                type: uint32
+                x-pointer: true
+                minimum: 256
+                maximum: 65535
+              encoding:
+                type: string
+                enum:
+                  - unsigned8
+                  - unsigned16
+                  - unsigned32
+                  - unsigned64
+                  - signed8
+                  - signed16
+                  - signed32
+                  - signed64
+                  - ipv4_address
+                  - ipv6_address
+                  - mac_address
+                  - octet_array
+                  - string
+              fixed_length:
+                type: uint16
+                x-pointer: true
+                minimum: 1
+                maximum: 65535
+              variable:
+                type: bool
+                x-pointer: true
+                enum: [true]
+              max_length:
+                type: uint32
+                x-pointer: true
+                minimum: 1
+                maximum: 65535
+              allow_private:
+                type: bool
+                x-pointer: true
+                enum: [true]
+            required: [source, encoding]
+      required: [loss_policy]
+    templates:
+      type: object
+      description: Template identifiers, copies and refresh timing.
+      properties:
+        id_base:
+          type: uint32
+          default: 256
+          minimum: 256
+          maximum: 65535
+        initial_copies:
+          type: uint8
+          default: 2
+          minimum: 2
+          maximum: 8
+        refresh_interval:
+          type: duration
+          default: 10m
+          pattern: '^\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$'
+    netflow_v9:
+      type: object
+      description: NetFlow v9 template refresh controls.
+      properties:
+        template_refresh_packets:
+          type: uint32
+          x-pointer: true
+          minimum: 1
+          maximum: 1000
+    ipfix:
+      type: object
+      description: IPFIX template refresh controls.
+      properties:
+        template_refresh_data_packets:
+          type: uint32
+          x-pointer: true
+          minimum: 1
+          maximum: 1000
+    uptime_origin:
+      type: uint64
+      x-pointer: true
+      description: Unix nanosecond origin used for v5 and timed v9 uptime fields.
+      minimum: 0
+      maximum: 9223372036854775807
+    max_datagram_size:
+      type: uint64
+      description: Maximum UDP payload size in bytes.
+      default: 464
+      minimum: 128
+      maximum: 65507
+    path_mtu:
+      type: uint64
+      x-pointer: true
+      description: Optional path MTU limit for packetization.
+      minimum: 512
+      maximum: 65535
+    max_records_per_message:
+      type: uint16
+      x-pointer: true
+      description: Optional record cap per packet.
+      minimum: 1
+      maximum: 1024
+    timeout:
+      type: duration
+      description: UDP dial and write timeout.
+      default: 5s
+      pattern: '^\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$'
+    shutdown_drain_timeout:
+      type: duration
+      description: Maximum shutdown drain period.
+      default: 5s
+      pattern: '^\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$'
+    dns:
+      type: object
+      description: Hostname resolution refresh and staleness controls.
+      properties:
+        refresh_interval:
+          type: duration
+          default: 5m
+          pattern: '^\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$'
+        stale_after:
+          type: duration
+          default: 1h
+          pattern: '^\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$'
+        timeout:
+          type: duration
+          default: 5s
+          pattern: '^\+?(([0-9]+(\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h))+$'
+    sending_queue:
+      type: object
+      description: Sending queue is deliberately disabled for this exporter.
+      properties:
+        enabled:
+          type: bool
+          enum: [false]
+          default: false
+    retry_on_failure:
+      type: object
+      description: Retry is deliberately disabled for this exporter.
+      properties:
+        enabled:
+          type: bool
+          enum: [false]
+          default: false
+  required: [endpoint, protocol, identity, mapping]
+attributes:
+  loss_class:
+    description: Fixed mapping loss class.
+    type: string
+    enum: [exporter, canonical_source]
+  message_kind:
+    description: Fixed datagram purpose.
+    type: string
+    enum: [data, bootstrap, refresh]
+  outcome:
+    description: Fixed local operation outcome.
+    type: string
+    enum: [confirmed, invalid, ambiguous, unsent, succeeded, failed]
+  reason:
+    description: Fixed admission or operation failure reason.
+    type: string
+    enum: [accepted, busy, closed, preflight, invalid_context, unavailable, internal, candidate, bootstrap, refresh]
+telemetry:
+  metrics:
+    netflow.exporter.admission:
+      enabled: true
+      description: Whole requests by admission result before helper entry. Accepted does not imply a write.
+      stability: alpha
+      unit: "{request}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [reason]
+    netflow.exporter.bytes:
+      enabled: true
+      description: Intended UDP payload bytes by local handoff result. Ambiguous counts the complete datagram, not the returned write length.
+      stability: alpha
+      unit: "By"
+      sum: {value_type: int, monotonic: true}
+      attributes: [message_kind, outcome]
+    netflow.exporter.data_messages:
+      enabled: true
+      description: Data datagrams classified by local UDP handoff result.
+      stability: alpha
+      unit: "{message}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [outcome]
+    netflow.exporter.dns:
+      enabled: true
+      description: Hostname resolution attempts by validated result, independently of later dial or bootstrap failures. Literal endpoints are excluded.
+      stability: alpha
+      unit: "{lookup}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [outcome]
+    netflow.exporter.endpoint_epochs:
+      enabled: true
+      description: Fully bootstrapped endpoint publications, including the initial epoch.
+      stability: alpha
+      unit: "{epoch}"
+      sum: {value_type: int, monotonic: true}
+      attributes: []
+    netflow.exporter.failures:
+      enabled: true
+      description: Failed operations by fixed reason. A request or candidate may fail more than one operation.
+      stability: alpha
+      unit: "{event}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [reason]
+    netflow.exporter.losses:
+      enabled: true
+      description: Explicitly acknowledged mapping loss events.
+      stability: alpha
+      unit: "{event}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [loss_class]
+    netflow.exporter.records:
+      enabled: true
+      description: Flow records classified by local UDP handoff result.
+      stability: alpha
+      unit: "{record}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [outcome]
+    netflow.exporter.templates:
+      enabled: true
+      description: Template datagrams by bootstrap or refresh handoff result, including unpublished candidate writes.
+      stability: alpha
+      unit: "{message}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [message_kind, outcome]

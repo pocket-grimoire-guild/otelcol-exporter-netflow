@@ -1,0 +1,5 @@
+go test fuzz v1
+[]byte("template-limit")
+uint8(65)
+uint8(0)
+uint64(0)

@@ -1,0 +1,94 @@
+{
+  "protocol": "netflow_v9",
+  "profile": "contrib-netflowreceiver-v0.160.0/netflow-v9-core-v1",
+  "canonical_file_sha256": "2c956bce6f97845155d77a940f9e14172e366f4cd130257c316e03d4f0a12c07",
+  "bootstrap_datagrams": 4,
+  "bootstrap_bytes": 400,
+  "fixture_datagram_count": 5,
+  "attributes": {
+    "source.port": 12345,
+    "destination.port": 443,
+    "network.transport": "tcp",
+    "flow.io.bytes": 56789,
+    "flow.io.packets": 1234,
+    "flow.type": "netflow_v9",
+    "flow.sequence_num": 4,
+    "flow.sampler_address": "127.0.0.1",
+    "flow.tcp_flags": 24,
+    "flow.in_if": 10,
+    "flow.out_if": 20,
+    "flow.ip_tos": 0,
+    "flow.ip_ttl": 64,
+    "flow.ip_flags": 0,
+    "flow.fragment_id": 0,
+    "flow.fragment_offset": 0,
+    "flow.ipv6_flow_label": 0,
+    "flow.icmp_type": 0,
+    "flow.icmp_code": 0,
+    "flow.src_mac": "00:00:00:00:00:00",
+    "flow.dst_mac": "00:00:00:00:00:00",
+    "flow.src_vlan": 0,
+    "flow.dst_vlan": 0,
+    "flow.vlan_id": 0,
+    "flow.next_hop_as": 0,
+    "flow.src_as": 64513,
+    "flow.dst_as": 64514,
+    "flow.forwarding_status": 0,
+    "flow.observation_domain_id": 42,
+    "flow.observation_point_id": 0
+  },
+  "cases": [
+    {
+      "name": "canonical-ipv4",
+      "fixture_id": "canonical-ipv4-v1",
+      "expected_records": 1,
+      "data_bytes": 68,
+      "wire_sampling_rates": [
+        1000
+      ],
+      "attributes": {
+        "source.address": "192.0.2.1",
+        "destination.address": "198.51.100.2",
+        "network.type": "ipv4",
+        "flow.src_net": 24,
+        "flow.dst_net": 24,
+        "flow.sampling_rate": 0
+      }
+    },
+    {
+      "name": "canonical-ipv6",
+      "fixture_id": "canonical-ipv6-v1",
+      "expected_records": 1,
+      "data_bytes": 92,
+      "wire_sampling_rates": [
+        1000
+      ],
+      "attributes": {
+        "source.address": "2001:db8::1",
+        "destination.address": "2001:db8::2",
+        "network.type": "ipv6",
+        "flow.src_net": 64,
+        "flow.dst_net": 64,
+        "flow.sampling_rate": 0
+      }
+    },
+    {
+      "name": "sampling-ie34-two-distinct-rates",
+      "fixture_id": "sampling-ie34-two-distinct-rates-v9-v1",
+      "expected_records": 2,
+      "data_bytes": 112,
+      "wire_sampling_rates": [
+        1000,
+        2000
+      ],
+      "attributes": {
+        "source.address": "192.0.2.1",
+        "destination.address": "198.51.100.2",
+        "network.type": "ipv4",
+        "flow.src_net": 24,
+        "flow.dst_net": 24,
+        "flow.sampling_rate": 0
+      }
+    }
+  ]
+}

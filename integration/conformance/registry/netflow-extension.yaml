@@ -1,0 +1,176 @@
+# Task-scoped extension for the current exporter self-telemetry only.
+# The upstream model is copied alongside this directory at run time; this
+# file is intentionally separate from the pinned upstream registry checkout.
+groups:
+  - id: registry.netflow
+    type: attribute_group
+    display_name: NetFlow exporter self-telemetry attributes
+    brief: Project-local attributes emitted by the NetFlow Collector exporter.
+    attributes:
+      - id: exporter
+        type: string
+        stability: development
+        brief: Collector exporter instance identifier.
+      - id: message_kind
+        type: string
+        stability: development
+        brief: Local datagram purpose.
+      - id: outcome
+        type: string
+        stability: development
+        brief: Local UDP handoff outcome.
+      - id: reason
+        type: string
+        stability: development
+        brief: Local admission or operation reason.
+      - id: loss_class
+        type: string
+        stability: development
+        brief: Explicit mapping loss class.
+      - id: data_type
+        type: string
+        stability: development
+        brief: Collector signal type counted by helper telemetry.
+
+  - id: metric.netflow.exporter.admission
+    type: metric
+    metric_name: otelcol_netflow.exporter.admission
+    stability: development
+    brief: Whole requests by admission result.
+    instrument: counter
+    unit: "{request}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: reason
+        requirement_level: required
+
+  - id: metric.netflow.exporter.bytes
+    type: metric
+    metric_name: otelcol_netflow.exporter.bytes
+    stability: development
+    brief: Intended UDP payload bytes by local handoff result.
+    instrument: counter
+    unit: By
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: message_kind
+        requirement_level: required
+      - ref: outcome
+        requirement_level: required
+
+  - id: metric.netflow.exporter.data_messages
+    type: metric
+    metric_name: otelcol_netflow.exporter.data_messages
+    stability: development
+    brief: Data datagrams by local UDP handoff result.
+    instrument: counter
+    unit: "{message}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: outcome
+        requirement_level: required
+
+  - id: metric.netflow.exporter.dns
+    type: metric
+    metric_name: otelcol_netflow.exporter.dns
+    stability: development
+    brief: Hostname resolution attempts by validated result.
+    instrument: counter
+    unit: "{lookup}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: outcome
+        requirement_level: required
+
+  - id: metric.netflow.exporter.endpoint_epochs
+    type: metric
+    metric_name: otelcol_netflow.exporter.endpoint_epochs
+    stability: development
+    brief: Fully bootstrapped endpoint publications.
+    instrument: counter
+    unit: "{epoch}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+
+  - id: metric.netflow.exporter.failures
+    type: metric
+    metric_name: otelcol_netflow.exporter.failures
+    stability: development
+    brief: Failed operations by fixed reason.
+    instrument: counter
+    unit: "{event}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: reason
+        requirement_level: required
+
+  - id: metric.netflow.exporter.losses
+    type: metric
+    metric_name: otelcol_netflow.exporter.losses
+    stability: development
+    brief: Explicitly acknowledged mapping loss events.
+    instrument: counter
+    unit: "{event}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: loss_class
+        requirement_level: required
+
+  - id: metric.netflow.exporter.records
+    type: metric
+    metric_name: otelcol_netflow.exporter.records
+    stability: development
+    brief: Flow records by local UDP handoff result.
+    instrument: counter
+    unit: "{record}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: outcome
+        requirement_level: required
+
+  - id: metric.netflow.exporter.templates
+    type: metric
+    metric_name: otelcol_netflow.exporter.templates
+    stability: development
+    brief: Template datagrams by local UDP handoff result.
+    instrument: counter
+    unit: "{message}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: message_kind
+        requirement_level: required
+      - ref: outcome
+        requirement_level: required
+
+  - id: metric.collector.exporter.in_flight_requests
+    type: metric
+    metric_name: otelcol_exporter_in_flight_requests
+    stability: development
+    brief: Collector exporter requests currently in flight.
+    instrument: updowncounter
+    unit: "{request}"
+    attributes:
+      - ref: data_type
+        requirement_level: required
+      - ref: exporter
+        requirement_level: required
+
+  - id: metric.collector.exporter.sent_log_records
+    type: metric
+    metric_name: otelcol_exporter_sent_log_records
+    stability: development
+    brief: Log records sent to the exporter helper.
+    instrument: counter
+    unit: "{record}"
+    attributes:
+      - ref: exporter
+        requirement_level: required

@@ -1,0 +1,60 @@
+{
+  "protocol": "netflow_v5",
+  "profile": "contrib-netflowreceiver-v0.160.0/netflow-v5-fixed-v1",
+  "canonical_file_sha256": "2c956bce6f97845155d77a940f9e14172e366f4cd130257c316e03d4f0a12c07",
+  "bootstrap_datagrams": 0,
+  "bootstrap_bytes": 0,
+  "fixture_datagram_count": 1,
+  "attributes": {
+    "source.port": 12345,
+    "destination.port": 443,
+    "network.transport": "tcp",
+    "flow.io.bytes": 56789,
+    "flow.io.packets": 1234,
+    "flow.type": "netflow_v5",
+    "flow.sequence_num": 0,
+    "flow.sampler_address": "127.0.0.1",
+    "flow.tcp_flags": 24,
+    "flow.in_if": 10,
+    "flow.out_if": 20,
+    "flow.ip_tos": 0,
+    "flow.ip_ttl": 0,
+    "flow.ip_flags": 0,
+    "flow.fragment_id": 0,
+    "flow.fragment_offset": 0,
+    "flow.ipv6_flow_label": 0,
+    "flow.icmp_type": 0,
+    "flow.icmp_code": 0,
+    "flow.src_mac": "00:00:00:00:00:00",
+    "flow.dst_mac": "00:00:00:00:00:00",
+    "flow.src_vlan": 0,
+    "flow.dst_vlan": 0,
+    "flow.vlan_id": 0,
+    "flow.next_hop_as": 0,
+    "flow.src_as": 64513,
+    "flow.dst_as": 64514,
+    "flow.forwarding_status": 0,
+    "flow.observation_domain_id": 0,
+    "flow.observation_point_id": 0,
+    "flow.next_hop": "192.0.2.254"
+  },
+  "cases": [
+    {
+      "name": "canonical-ipv4",
+      "fixture_id": "canonical-v5-ipv4-v1",
+      "expected_records": 1,
+      "data_bytes": 72,
+      "wire_sampling_rates": [
+        1000
+      ],
+      "attributes": {
+        "source.address": "192.0.2.1",
+        "destination.address": "198.51.100.2",
+        "network.type": "ipv4",
+        "flow.src_net": 24,
+        "flow.dst_net": 24,
+        "flow.sampling_rate": 1000
+      }
+    }
+  ]
+}

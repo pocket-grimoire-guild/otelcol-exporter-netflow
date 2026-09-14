@@ -1,0 +1,18 @@
+# Exact runtime set captured by the 2026-09-12 pilot. Keep the transitive
+# entries here: the harness rejects a package graph that differs from this
+# complete pin set before it starts Weaver.
+PyYAML==6.0.3
+asgiref==3.12.1
+certifi==2026.7.22
+charset-normalizer==3.5.1
+grpcio==1.83.1
+idna==3.19
+opentelemetry-api==1.44.0
+opentelemetry-proto==1.44.0
+opentelemetry-sdk==1.44.0
+opentelemetry-semantic-conventions==0.65b0
+opentelemetry-test-utils==0.65b0
+protobuf==7.36.1
+requests==2.34.2
+typing_extensions==4.16.0
+urllib3==2.7.0

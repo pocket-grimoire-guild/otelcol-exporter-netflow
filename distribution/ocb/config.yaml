@@ -1,0 +1,86 @@
+# Three isolated pipelines. Ports/endpoints and the v5/v9 origins are supplied by
+# the operator (or smoke_test.sh). No receiver queue/retry is added downstream.
+receivers:
+  netflow/v5:
+    scheme: netflow
+    hostname: 127.0.0.1
+    port: ${env:NETFLOW_V5_PORT}
+    sockets: 1
+    workers: 1
+    queue_size: 8
+    send_raw: false
+  netflow/v9:
+    scheme: netflow
+    hostname: 127.0.0.1
+    port: ${env:NETFLOW_V9_PORT}
+    sockets: 1
+    workers: 1
+    queue_size: 8
+    send_raw: false
+  netflow/ipfix:
+    scheme: netflow
+    hostname: 127.0.0.1
+    port: ${env:NETFLOW_IPFIX_PORT}
+    sockets: 1
+    workers: 1
+    queue_size: 8
+    send_raw: false
+exporters:
+  netflow/v5:
+    endpoint: ${env:NETFLOW_V5_ENDPOINT}
+    protocol: netflow_v5
+    schema: contrib-netflowreceiver-v0.160.0
+    identity: {engine_type: 1, engine_id: 1, sampling_mode: 0}
+    uptime_origin: ${env:NETFLOW_V5_ORIGIN}
+    mapping:
+      profile: contrib-netflowreceiver-v0.160.0/netflow-v5-fixed-v1
+      protocol_identifiers: [{token: tcp, number: 6}, {token: udp, number: 17}]
+      input_guarantees: {flow_io_bytes: layer3_total_octets}
+      loss_policy: encode_and_count
+  netflow/v9:
+    endpoint: ${env:NETFLOW_V9_ENDPOINT}
+    protocol: netflow_v9
+    schema: contrib-netflowreceiver-v0.160.0
+    identity: {source_id: 42}
+    uptime_origin: ${env:NETFLOW_V9_ORIGIN}
+    templates: {id_base: 300}
+    # BOUNDED LIFETIME: elapsed uptime must fit uint32 ms (about 49.71 days).
+    # DEPLOYMENT ATTESTATION: source templates carry measured flow start/end,
+    # preserved into canonical attributes and exact ms relative to this origin.
+    # Origin must precede every accepted flow; no inferred origin or rollover.
+    # Prefer IPFIX for longer unattended service; plan any restart/new origin.
+    mapping:
+      profile: contrib-netflowreceiver-v0.160.0/netflow-v9-timed-v1
+      protocol_identifiers: [{token: tcp, number: 6}, {token: udp, number: 17}]
+      network_type_versions: [{token: ipv4, version: 4}, {token: ipv6, version: 6}]
+      loss_policy: encode_and_count
+  netflow/ipfix:
+    endpoint: ${env:NETFLOW_IPFIX_ENDPOINT}
+    protocol: ipfix
+    schema: contrib-netflowreceiver-v0.160.0
+    identity: {observation_domain_id: 42}
+    templates: {id_base: 300}
+    # DEPLOYMENT ATTESTATION: original source templates must carry measured
+    # flow start/end times, preserved into canonical flow.start/flow.end.
+    # The exporter cannot infer provenance or repair receipt/export-time fallback.
+    mapping:
+      profile: contrib-netflowreceiver-v0.160.0/ipfix-general-v1
+      protocol_identifiers: [{token: tcp, number: 6}, {token: udp, number: 17}]
+      network_type_versions: [{token: ipv4, version: 4}, {token: ipv6, version: 6}]
+      loss_policy: encode_and_count
+service:
+  telemetry:
+    logs:
+      encoding: json
+    metrics:
+      level: none
+  pipelines:
+    logs/v5:
+      receivers: [netflow/v5]
+      exporters: [netflow/v5]
+    logs/v9:
+      receivers: [netflow/v9]
+      exporters: [netflow/v9]
+    logs/ipfix:
+      receivers: [netflow/ipfix]
+      exporters: [netflow/ipfix]

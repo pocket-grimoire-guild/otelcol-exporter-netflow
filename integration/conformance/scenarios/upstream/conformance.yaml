@@ -1,0 +1,22 @@
+# This scenario package is intentionally separate from the custom-registry
+# package. It exercises the same captured exporter signals against the pinned
+# upstream registry, so undeclared project-local signals remain visible as an
+# upstream finding.
+instrumented_library: current-netflow-exporter
+instrumentation_library: task-local-go-probe
+
+scenarios:
+  valid:
+    run: python3 replay.py --mode valid
+    metrics:
+      - otelcol_exporter_in_flight_requests
+      - otelcol_exporter_sent_log_records
+      - otelcol_netflow.exporter.admission
+      - otelcol_netflow.exporter.bytes
+      - otelcol_netflow.exporter.data_messages
+      - otelcol_netflow.exporter.dns
+      - otelcol_netflow.exporter.endpoint_epochs
+      - otelcol_netflow.exporter.failures
+      - otelcol_netflow.exporter.losses
+      - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.templates

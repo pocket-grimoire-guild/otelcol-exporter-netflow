@@ -1,0 +1,40 @@
+endpoint: 127.0.0.1:4739
+protocol: ipfix
+schema: contrib-netflowreceiver-v0.160.0
+identity:
+  observation_domain_id: 42
+mapping:
+  profile: contrib-netflowreceiver-v0.160.0/ipfix-general-v1
+  protocol_identifiers:
+    - token: tcp
+      number: 6
+  network_type_versions:
+    - token: ipv4
+      version: 4
+    - token: ipv6
+      version: 6
+  loss_policy: encode_and_count
+  custom:
+    - source: vendor.label
+      pen: 32473
+      element_id: 100
+      encoding: string
+      variable: true
+      max_length: 16
+templates:
+  id_base: 301
+  initial_copies: 2
+  refresh_interval: 30s
+ipfix:
+  template_refresh_data_packets: 30
+path_mtu: 1200
+timeout: 5s
+shutdown_drain_timeout: 5s
+dns:
+  refresh_interval: 1m
+  stale_after: 10m
+  timeout: 5s
+sending_queue:
+  enabled: false
+retry_on_failure:
+  enabled: false

@@ -1,0 +1,30 @@
+endpoint: 127.0.0.1:4739
+protocol: netflow_v5
+schema: contrib-netflowreceiver-v0.160.0
+identity:
+  engine_type: 0
+  engine_id: 7
+  sampling_mode: 1
+uptime_origin: 1788220800000000000
+mapping:
+  profile: contrib-netflowreceiver-v0.160.0/netflow-v5-fixed-v1
+  protocol_identifiers:
+    - token: tcp
+      number: 6
+  input_guarantees:
+    flow_io_bytes: layer3_total_octets
+  loss_policy: encode_and_count
+templates:
+  id_base: 256
+  initial_copies: 2
+  refresh_interval: 30s
+timeout: 5s
+shutdown_drain_timeout: 5s
+dns:
+  refresh_interval: 1m
+  stale_after: 10m
+  timeout: 5s
+sending_queue:
+  enabled: false
+retry_on_failure:
+  enabled: false
