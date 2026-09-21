@@ -94,9 +94,9 @@ envelope retains a timestamp; no new fallback or provenance inference is added.
 GoFlow2 v2.2.6's shared NTP conversion consumes the low 11 fraction bits of
 IPFIX dateTimeMicroseconds (IEs 154/155), although
 [RFC 7011 §6.1.9](https://www.rfc-editor.org/rfc/rfc7011.html#section-6.1.9)
-requires receivers to ignore them.
-The [MVP acceptance record](../mvp-acceptance.md) records the paired flow-time
-characterization and the separate era/rollover limits. This is
+requires receivers to ignore them. The
+[MVP acceptance record](../mvp-acceptance.md) records the paired
+flow-time characterization and the separate era/rollover limits. This is
 an upstream conversion limit: the exporter preserves the projected value and
 cannot safely mask canonical nanoseconds after the source IE identity is lost.
 
@@ -109,13 +109,19 @@ which already establish actual-Collector timing behavior for their finite cases.
 
 ## Record envelope and non-attribute fields
 
+Another producer may construct the exact supported representation; literal
+Contrib origin and receiver scope identity are not required. The complete
+pinned input contract still applies when fewer output fields are selected.
+Acceptance does not attest measured-time, sampling, or other field provenance;
+each producer must establish its own field semantics and provenance.
+
 The 41-key count is intentionally separate from the log envelope:
 
 | Envelope item | Pinned source fact | Canonical policy |
 | --- | --- | --- |
 | `Timestamp` | [`P231-236`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser.go#L231-L236) sets it from `TimeFlowStartNs`; empty tests confirm zero defaults ([`T144-155`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser_test.go#L144-L155)). | `flow.start` is authoritative.  Do not fall back to or silently overwrite it with `Timestamp`. |
 | `ObservedTimestamp` | [`P231-236`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser.go#L231-L236) sets it from `TimeReceivedNs`; populated tests verify the distinction ([`T95-96`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser_test.go#L95-L96)). | `flow.time_received` is authoritative.  Do not derive it from `ObservedTimestamp` or wall-clock time. |
-| Body | In parsed mode `addMessageAttributes` never calls a body setter ([`P216-301`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser.go#L216-L301)). | Empty body is accepted only as the receiver's parsed envelope; no body fallback or string parsing. |
+| Body | In parsed mode `addMessageAttributes` never calls a body setter ([`P216-301`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser.go#L216-L301)). | An empty pdata body is required for this receiver-compatible parsed representation; no body fallback or string parsing. |
 | Resource | The wrapper creates an empty `ResourceLogs` and sets no resource attributes ([`W42-47`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/producer.go#L42-L47)). | Resource attributes are preserved as provenance if a caller adds them, but are not canonical flow fields and cannot prove receiver version. |
 | Scope | The wrapper sets scope name `otelcol/netflowreceiver` and scope attribute `receiver=netflow` ([`W42-47`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/producer.go#L42-L47); [`metadata.yaml`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/metadata.yaml#L1-L5)). | Scope is useful provenance, but is not sufficient version proof; profile selection remains explicit. |
 | Severity, trace/span IDs, and flags | The wrapper/parser set none of `SeverityNumber`, `SeverityText`, `TraceID`, `SpanID`, or log flags (the only record mutations are timestamps and attributes in [`P231-301`](https://github.com/open-telemetry/opentelemetry-collector-contrib/blob/982f20b8a8e8a2569fab3e27cf8b008e8a5080c1/receiver/netflowreceiver/parser.go#L231-L301)). | These fields are absent/unset; ignore them for flow identity and do not synthesize values. |
@@ -131,7 +137,7 @@ string ([`producer_test.go#L132-L150`](https://github.com/open-telemetry/opentel
 ## Unknown, custom, and unsupported data
 
 The protobuf contains additional fields (BGP communities, AS path, MPLS, layer
-stack, and routing headers) beyond the 41 keys ([`F85-121`](https://github.com/netsampler/goflow2/blob/c9824f41bcad11d4490a668ed5270b03056d8217/pb/flow.proto#L85-L121)).  goflow2 custom mapping can target known protobuf fields or protobuf unknown fields ([`reflect.go#L111-L124`](https://github.com/netsampler/goflow2/blob/c9824f41bcad11d4490a668ed5270b03056d8217/producer/proto/reflect.go#L111-L124)); the receiver parser does not emit those fields as OTel attributes. Extra protobuf fields are absent from this profile. Preservation or mapping of unknown OTel attributes is outside this profile. No automatic name guessing, duplicate-field merge, or unbounded attribute copying is part of this profile. Unknown protocol numbers and flow types remain the literal `unknown` tokens described above.
+stack, and routing headers) beyond the 41 keys ([`F85-121`](https://github.com/netsampler/goflow2/blob/c9824f41bcad11d4490a668ed5270b03056d8217/pb/flow.proto#L85-L121)).  goflow2 custom mapping can target known protobuf fields or protobuf unknown fields ([`reflect.go#L111-L124`](https://github.com/netsampler/goflow2/blob/c9824f41bcad11d4490a668ed5270b03056d8217/producer/proto/reflect.go#L111-L124)); the receiver parser does not emit those fields as OTel attributes.  The canonical receiver schema remains the 41-key input. For v9 and IPFIX, explicitly configured custom fields may append bounded fields sourced from exact top-level log-attribute keys under the [custom field grammar](default-profiles.md#custom-field-grammar-and-limits); each selected source must be present and satisfy its declared type and encoding. This does not provide automatic copying, v5 custom fields, arbitrary-schema inference, nested traversal, source aliases, or replacement of required canonical keys. Unknown protocol numbers and flow types remain the literal `unknown` tokens described above.
 
 ## Version and upgrade policy
 

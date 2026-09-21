@@ -2,6 +2,7 @@ package mapping
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,9 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	staticmapping "github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/mapping"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/wire"
@@ -22,7 +25,7 @@ import (
 
 const (
 	manifestSchema      = "otel-netflow-mapping-coverage"
-	manifestVersion     = 1
+	manifestVersion     = 2
 	manifestFingerprint = "8b890b8dd63790803dcd7f350a39867eae6d19ca2ecf438540a41160dc1d114a"
 )
 
@@ -31,7 +34,6 @@ type manifestSource struct {
 	Contrib string `json:"contrib_commit,omitempty"`
 	Goflow2 string `json:"goflow2_commit,omitempty"`
 	Path    string `json:"path"`
-	SHA256  string `json:"sha256"`
 }
 
 type manifestRef struct {
@@ -80,7 +82,9 @@ type manifestDocument struct {
 
 // manifestRegistry is intentionally a literal 123-case registry. It is an
 // independent review surface: the checker derives its expected matrix from
-// the pinned documents, while this registry binds every stable Go subtest.
+// parsed names and rows in the pinned documents, while this registry binds
+// every stable Go subtest. Whole-document bytes and unparsed prose remain
+// outside this check's boundary.
 var manifestRegistry = []registryCell{
 	{Attribute: "source.address", Protocol: "netflow_v5", Classification: []string{"exact"}, MatrixRef: manifestRef{Row: 1, Column: 1}, OutcomeSHA256: "022f55cd6a6967149878c3a0a3f49c745a58c2c981cc8a1bef2fc285d08e9b4a", TestID: "integration/mapping:TestManifestCoverage/netflow_v5/source.address"},
 	{Attribute: "source.address", Protocol: "netflow_v9", Classification: []string{"exact"}, MatrixRef: manifestRef{Row: 1, Column: 2}, OutcomeSHA256: "88ee2c082bb708b92c183b79475af2e4dded55e21ea5ccad24de4b6be79caa21", TestID: "integration/mapping:TestManifestCoverage/netflow_v9/source.address"},
@@ -1142,8 +1146,8 @@ func checkManifestMutations(t *testing.T, repoRoot string, raw []byte) {
 		{"stale-cell", func(doc map[string]any) {
 			doc["canonical"].(map[string]any)["cells"].([]any)[0].(map[string]any)["attribute"] = "flow.stale"
 		}},
-		{"source-drift", func(doc map[string]any) {
-			doc["sources"].(map[string]any)["matrix"].(map[string]any)["sha256"] = strings.Repeat("0", 64)
+		{"source-identity-drift", func(doc map[string]any) {
+			doc["sources"].(map[string]any)["matrix"].(map[string]any)["id"] = "other-matrix"
 		}},
 		{"qualified-outcome-drift", func(doc map[string]any) {
 			doc["canonical"].(map[string]any)["cells"].([]any)[0].(map[string]any)["outcome"] = "**exact** hostile-canary"
@@ -1300,13 +1304,98 @@ func runCheckerBytes(t *testing.T, repoRoot string, data []byte) error {
 	return runCheckerPath(t, repoRoot, path)
 }
 
+const checkerOutputLimit = 1024
+
+type checkerResult struct {
+	exitCode       int
+	output         string
+	timedOut       bool
+	outputExceeded bool
+	setupErr       error
+}
+
+type checkerOutput struct {
+	mu       sync.Mutex
+	buffer   bytes.Buffer
+	limit    int
+	exceeded bool
+	cancel   context.CancelFunc
+}
+
+func (w *checkerOutput) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.exceeded {
+		return len(data), nil
+	}
+	remaining := w.limit - w.buffer.Len()
+	if len(data) > remaining {
+		if remaining > 0 {
+			_, _ = w.buffer.Write(data[:remaining])
+		}
+		w.exceeded = true
+		if w.cancel != nil {
+			w.cancel()
+		}
+		return len(data), nil
+	}
+	_, _ = w.buffer.Write(data)
+	return len(data), nil
+}
+
+func (w *checkerOutput) snapshot() (string, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buffer.String(), w.exceeded
+}
+
+func runCheckerCommand(repoRoot, manifestPath string) checkerResult {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output := &checkerOutput{limit: checkerOutputLimit, cancel: cancel}
+	command := exec.CommandContext(ctx, "python3", "scripts/check-mapping-manifest.py", manifestPath)
+	command.Dir = repoRoot
+	command.Stdout = output
+	command.Stderr = output
+	runErr := command.Run()
+	text, exceeded := output.snapshot()
+	result := checkerResult{output: text, outputExceeded: exceeded}
+	if exceeded {
+		return result
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		result.timedOut = true
+		return result
+	}
+	if runErr == nil {
+		return result
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(runErr, &exitErr) {
+		result.setupErr = runErr
+		return result
+	}
+	result.exitCode = exitErr.ExitCode()
+	return result
+}
+
 func runCheckerPath(t *testing.T, repoRoot, manifestPath string) error {
 	t.Helper()
-	command := exec.Command("python3", "scripts/check-mapping-manifest.py", manifestPath)
-	command.Dir = repoRoot
-	output, err := command.CombinedOutput()
-	if err == nil {
+	result := runCheckerCommand(repoRoot, manifestPath)
+	if result.setupErr != nil {
+		t.Fatalf("checker setup failed: %v", result.setupErr)
+	}
+	if result.timedOut {
+		t.Fatalf("checker timed out")
+	}
+	if result.outputExceeded {
+		t.Fatalf("checker output exceeded %d-byte bound", checkerOutputLimit)
+	}
+	if result.exitCode == 0 {
 		return nil
 	}
-	return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(output)))
+	if result.exitCode != 1 || result.output != manifestCheckerDiagnostic {
+		t.Fatalf("unexpected checker rejection: exit=%d output=%q", result.exitCode, result.output)
+	}
+	return fmt.Errorf("exit status %d: %s", result.exitCode, strings.TrimSpace(result.output))
 }

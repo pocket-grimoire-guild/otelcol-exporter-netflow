@@ -110,22 +110,37 @@ func (c *Config) newRuntime(clock transport.Clock, dial transport.NumericDial) (
 }
 
 func (c *Config) newRuntimeWithObserver(clock transport.Clock, dial transport.NumericDial, observe destination.Observer) (*destination.Runtime, error) {
-	if c == nil || c.SendingQueue.Enabled || c.RetryOnFailure.Enabled ||
-		c.Schema != mapping.SchemaContribNetflowReceiverV0160 || len(c.Endpoint) < 1 || len(c.Endpoint) > 512 {
+	return c.newRuntimeWithObserverAndTimer(clock, dial, observe, nil)
+}
+
+func (c *Config) newRuntimeWithObserverAndTimer(clock transport.Clock, dial transport.NumericDial, observe destination.Observer, newTimer transport.TimerFactory) (*destination.Runtime, error) {
+	if c == nil {
 		return nil, configError()
+	}
+	if c.SendingQueue.Enabled {
+		return nil, diagnosticError(diagnosticQueue)
+	}
+	if c.RetryOnFailure.Enabled {
+		return nil, diagnosticError(diagnosticRetry)
+	}
+	if c.Schema != mapping.SchemaContribNetflowReceiverV0160 {
+		return nil, diagnosticError(diagnosticSchema)
+	}
+	if len(c.Endpoint) < 1 || len(c.Endpoint) > 512 {
+		return nil, diagnosticError(diagnosticEndpoint)
 	}
 	host, portText, err := net.SplitHostPort(c.Endpoint)
 	if err != nil || len(portText) == 0 {
-		return nil, configError()
+		return nil, diagnosticError(diagnosticEndpoint)
 	}
 	for _, ch := range portText {
 		if ch < '0' || ch > '9' {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticEndpoint)
 		}
 	}
 	port, err := strconv.ParseUint(portText, 10, 16)
 	if err != nil || port == 0 {
-		return nil, configError()
+		return nil, diagnosticError(diagnosticEndpoint)
 	}
 	var protocol wire.Protocol
 	var writer wire.ContractWriter
@@ -137,68 +152,105 @@ func (c *Config) newRuntimeWithObserver(clock transport.Clock, dial transport.Nu
 	case "ipfix":
 		protocol, writer = wire.ProtocolIPFIX, ipfix.NewWriter()
 	default:
-		return nil, configError()
+		return nil, diagnosticError(diagnosticProtocol)
 	}
 	s := destination.DefaultConfig(protocol)
 	id := c.Identity
 	switch protocol {
 	case wire.ProtocolV5:
 		if id.EngineType == nil || id.EngineID == nil || id.SourceID != nil || id.ObservationDomainID != nil || c.UptimeOrigin == nil {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticIdentity)
 		}
 		s.EngineType, s.EngineID = *id.EngineType, *id.EngineID
 		if id.SamplingMode != nil {
 			if *id.SamplingMode > 3 {
-				return nil, configError()
+				return nil, diagnosticError(diagnosticSamplingMode)
 			}
 			s.SamplingMode = *id.SamplingMode
 		}
 	case wire.ProtocolV9:
 		if id.SourceID == nil || id.ObservationDomainID != nil || id.EngineType != nil || id.EngineID != nil || id.SamplingMode != nil {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticIdentity)
 		}
 		s.SourceID = *id.SourceID
 	case wire.ProtocolIPFIX:
 		if id.ObservationDomainID == nil || id.SourceID != nil || id.EngineType != nil || id.EngineID != nil || id.SamplingMode != nil || c.UptimeOrigin != nil {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticIdentity)
 		}
 		s.ObservationDomainID = *id.ObservationDomainID
 	}
 	if c.UptimeOrigin != nil {
 		if *c.UptimeOrigin > math.MaxInt64 {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticUptimeOrigin)
 		}
 		s.HasUptimeOrigin, s.UptimeOriginUnixNanos = true, *c.UptimeOrigin
 	}
-	if c.MaxDatagramSize < 128 || c.MaxDatagramSize > 65507 || c.Templates.IDBase < 256 || c.Templates.IDBase > 65535 ||
-		c.Templates.InitialCopies < 2 || c.Templates.InitialCopies > 8 || c.Templates.RefreshInterval < 30*time.Second || c.Templates.RefreshInterval > 24*time.Hour ||
-		c.Timeout < 100*time.Millisecond || c.Timeout > 30*time.Second || c.Timeout > c.ShutdownDrainTimeout ||
-		c.ShutdownDrainTimeout < time.Second || c.ShutdownDrainTimeout > 30*time.Second ||
-		c.DNS.Timeout < 100*time.Millisecond || c.DNS.Timeout > 30*time.Second || c.DNS.Timeout > c.ShutdownDrainTimeout ||
-		c.DNS.RefreshInterval < time.Second || c.DNS.RefreshInterval > 24*time.Hour || c.DNS.StaleAfter < c.DNS.RefreshInterval || c.DNS.StaleAfter > 7*24*time.Hour {
-		return nil, configError()
+	if c.MaxDatagramSize < 128 || c.MaxDatagramSize > 65507 {
+		return nil, diagnosticError(diagnosticMaxDatagram)
+	}
+	if c.Templates.IDBase < 256 || c.Templates.IDBase > 65535 {
+		return nil, diagnosticError(diagnosticTemplateIDRange)
+	}
+	if c.Templates.InitialCopies < 2 || c.Templates.InitialCopies > 8 {
+		return nil, diagnosticError(diagnosticTemplateCopies)
+	}
+	if c.Templates.RefreshInterval < 30*time.Second || c.Templates.RefreshInterval > 24*time.Hour {
+		return nil, diagnosticError(diagnosticTemplateRefresh)
+	}
+	if c.Timeout < 100*time.Millisecond || c.Timeout > 30*time.Second {
+		return nil, diagnosticError(diagnosticTimeoutRange)
+	}
+	if c.Timeout > c.ShutdownDrainTimeout {
+		return nil, diagnosticError(diagnosticTimeoutDrain)
+	}
+	if c.ShutdownDrainTimeout < time.Second || c.ShutdownDrainTimeout > 30*time.Second {
+		return nil, diagnosticError(diagnosticDrainRange)
+	}
+	if c.DNS.Timeout < 100*time.Millisecond || c.DNS.Timeout > 30*time.Second {
+		return nil, diagnosticError(diagnosticDNSTimeoutRange)
+	}
+	if c.DNS.Timeout > c.ShutdownDrainTimeout {
+		return nil, diagnosticError(diagnosticDNSTimeoutDrain)
+	}
+	if c.DNS.RefreshInterval < time.Second || c.DNS.RefreshInterval > 24*time.Hour {
+		return nil, diagnosticError(diagnosticDNSRefreshRange)
+	}
+	if c.DNS.StaleAfter < c.DNS.RefreshInterval {
+		return nil, diagnosticError(diagnosticDNSStaleRefresh)
+	}
+	if c.DNS.StaleAfter > 7*24*time.Hour {
+		return nil, diagnosticError(diagnosticDNSStaleRange)
 	}
 	if c.MaxRecordsPerMessage != nil {
 		if *c.MaxRecordsPerMessage < 1 || *c.MaxRecordsPerMessage > 1024 || (protocol == wire.ProtocolV5 && *c.MaxRecordsPerMessage > 30) {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticRecordLimit)
 		}
 		s.MaxRecordsPerMessage = *c.MaxRecordsPerMessage
 	}
 	if n := c.NetFlowV9.TemplateRefreshPackets; n != nil {
 		if protocol != wire.ProtocolV9 || *n < 1 || *n > 1000 {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticV9RefreshPackets)
 		}
 		s.V9RefreshPacketCount = *n
 	}
 	if n := c.IPFIX.TemplateRefreshDataPackets; n != nil {
 		if protocol != wire.ProtocolIPFIX || *n < 1 || *n > 1000 {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticIPFIXRefreshPackets)
 		}
 		s.IPFIXDataMessageRefreshCount = *n
 	}
 	m := c.Mapping
-	if (m.Profile == nil) == (m.Fields == nil) || m.LossPolicy == nil || (m.Profile != nil && *m.Profile == "") || (m.Fields != nil && len(*m.Fields) == 0) {
-		return nil, configError()
+	if (m.Profile == nil) == (m.Fields == nil) {
+		return nil, diagnosticError(diagnosticMappingSelector)
+	}
+	if m.LossPolicy == nil {
+		return nil, diagnosticError(diagnosticMappingPolicyRequired)
+	}
+	if m.Profile != nil && *m.Profile == "" {
+		return nil, diagnosticError(diagnosticMappingSelector)
+	}
+	if m.Fields != nil && len(*m.Fields) == 0 {
+		return nil, diagnosticError(diagnosticMappingSelector)
 	}
 	mc := mapping.Config{Schema: c.Schema, Protocol: protocol, ProtocolIdentifiers: m.ProtocolIdentifiers, NetworkTypeVersions: m.NetworkTypeVersions,
 		InputGuarantees: m.InputGuarantees, LossPolicy: *m.LossPolicy, Custom: m.Custom, IDBase: c.Templates.IDBase, MaxDatagramSize: c.MaxDatagramSize,
@@ -216,13 +268,13 @@ func (c *Config) newRuntimeWithObserver(clock transport.Clock, dial transport.Nu
 	}
 	if c.PathMTU != nil {
 		if *c.PathMTU < 512 || *c.PathMTU > 65535 {
-			return nil, configError()
+			return nil, diagnosticError(diagnosticPathMTU)
 		}
 		mc.PathMTU = *c.PathMTU
 	}
 	compiled, err := mapping.Compile(mc)
 	if err != nil {
-		return nil, configError()
+		return nil, projectCompileError(err, protocol)
 	}
 	resolver, err := transport.NewResolver("udp", host, c.DNS.Timeout)
 	if err != nil {
@@ -237,7 +289,7 @@ func (c *Config) newRuntimeWithObserver(clock transport.Clock, dial transport.Nu
 		clock = millisecondClock{clock: clock, origin: s.UptimeOriginUnixNanos, checkUptime: s.HasUptimeOrigin}
 	}
 	r, err := destination.NewRuntime(compiled, writer, destination.RuntimeConfig{State: s, DNSRefresh: c.DNS.RefreshInterval, Observe: observe,
-		DNSStaleAfter: c.DNS.StaleAfter, ShutdownDrainTimeout: c.ShutdownDrainTimeout}, dialer, clock)
+		DNSStaleAfter: c.DNS.StaleAfter, NewTimer: newTimer, ShutdownDrainTimeout: c.ShutdownDrainTimeout}, dialer, clock)
 	if err != nil {
 		return nil, configError()
 	}

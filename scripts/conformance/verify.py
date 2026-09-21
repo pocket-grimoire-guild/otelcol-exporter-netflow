@@ -24,7 +24,10 @@ EXPECTED_METRICS = {
     "otelcol_netflow.exporter.failures",
     "otelcol_netflow.exporter.losses",
     "otelcol_netflow.exporter.records",
+    "otelcol_netflow.exporter.rejected_records",
     "otelcol_netflow.exporter.templates",
+    "otelcol_netflow.exporter.uptime_remaining",
+    "otelcol_netflow.exporter.uptime_exhausted",
 }
 TARGET = "otelcol_netflow.exporter.records"
 
@@ -104,8 +107,8 @@ def check_data(data: Any, kind: str) -> list[dict[str, Any]]:
     if not isinstance(data, dict):
         raise EvidenceError("runner data file is not an object")
     metrics = data.get("metrics")
-    if not isinstance(metrics, list) or set(metrics) != EXPECTED_METRICS:
-        raise EvidenceError("runner data file does not cover all 11 signals")
+    if not isinstance(metrics, list) or len(metrics) != len(EXPECTED_METRICS) or set(metrics) != EXPECTED_METRICS:
+        raise EvidenceError("runner data file does not cover all 14 signals")
     findings = data.get("findings")
     if not isinstance(findings, list):
         raise EvidenceError("runner data file has no findings list")
@@ -210,7 +213,7 @@ def main() -> int:
             require_valid_clean=kind == "custom-controls",
         )
         check_log(args.log, args.mode)
-        print(f"verified {args.mode}: captures, all 11 metrics, reports, findings, statuses")
+        print(f"verified {args.mode}: captures, all 14 metrics, reports, findings, statuses")
         return 0
     except (EvidenceError, ReplayError, TypeError, KeyError, ValueError) as error:
         print(f"conformance evidence failed: {error}", file=sys.stderr)

@@ -74,7 +74,8 @@ const (
 // grown as records arrive, so a request is not rejected at an arbitrary source
 // count while packet-local pending state remains bounded.
 type sourceLedger struct {
-	classes []byte
+	classes         []byte
+	rejectionCounts RejectionCounts
 
 	covered   uint64
 	valid     uint64
@@ -120,6 +121,14 @@ func (l *sourceLedger) Counts() SourceLedgerCounts {
 	}
 }
 
+// RejectionCounts returns a value copy of the fixed reason histogram.
+func (l *sourceLedger) RejectionCounts() RejectionCounts {
+	if l == nil {
+		return RejectionCounts{}
+	}
+	return l.rejectionCounts
+}
+
 // Packet returns the active packet's source boundary as a value copy.
 func (l *sourceLedger) Packet() SourceLedgerPacket {
 	if l == nil {
@@ -138,6 +147,12 @@ func (l *sourceLedger) Packet() SourceLedgerPacket {
 // covered prefix, so gaps and duplicates are rejected before any counter or
 // classification mutation.
 func (l *sourceLedger) addSource(ordinal uint64, valid bool) error {
+	return l.addSourceReason(ordinal, valid, RejectionOther)
+}
+
+// addSourceReason appends exactly one source ordinal. Invalid additions use
+// the supplied closed cause only after all ordinal/capacity checks succeed.
+func (l *sourceLedger) addSourceReason(ordinal uint64, valid bool, reason RejectionReason) error {
 	if l == nil || ordinal != l.covered || ordinal == math.MaxUint64 {
 		return ErrLedgerOrdinal
 	}
@@ -149,9 +164,37 @@ func (l *sourceLedger) addSource(ordinal uint64, valid bool) error {
 	} else {
 		l.invalid++
 		l.setStoredClass(ordinal, SourceInvalid)
+		l.rejectionCounts[reasonIndex(reason)]++
 	}
 	l.covered++
 	return nil
+}
+
+// invalidate performs the only valid-to-invalid transition. It validates the
+// exact prior class before changing either scalar counters or the histogram.
+func (l *sourceLedger) invalidate(ordinal uint64, reason RejectionReason) error {
+	if l == nil || ordinal >= l.covered || l.storedClass(ordinal) != SourceUnsentValid {
+		return ErrLedgerOrdinal
+	}
+	// Pending valid ordinals share the unsent class with the rest of the
+	// covered valid prefix. The active interval contains only pending valid
+	// ordinals and already-invalid gaps, so reject the former before touching
+	// scalar counts, classes, or the reason histogram.
+	if l.packetOpen && ordinal >= l.packetStart && ordinal < l.packetEnd {
+		return ErrLedgerOrdinal
+	}
+	l.valid--
+	l.invalid++
+	l.setStoredClass(ordinal, SourceInvalid)
+	l.rejectionCounts[reasonIndex(reason)]++
+	return nil
+}
+
+func reasonIndex(reason RejectionReason) int {
+	if int(reason) < 0 || int(reason) >= RejectionReasonCount {
+		return int(RejectionOther)
+	}
+	return int(reason)
 }
 
 func (l *sourceLedger) ensureOrdinal(ordinal uint64) error {

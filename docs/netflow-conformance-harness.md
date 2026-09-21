@@ -17,14 +17,15 @@ scripts/conformance/run.sh --output ./artifacts/conformance
 The command creates a fresh timestamp/PID directory below the selected output
 parent. A caller may choose any fresh output parent; the default is
 `artifacts/conformance` below the checkout. An existing run directory is
-rejected so a stale capture cannot be reused. Each command also runs seven
-focused guards against its fresh evidence, retained in `logs/harness-guards.log`.
+rejected so a stale capture cannot be reused. Each command also runs fifteen
+focused guards against its fresh evidence, retained in `logs/harness-guards.log`,
+under a 30-second process limit and a 1 MiB output limit.
 
 The command requires Linux x86_64, Go `go1.26.8`, Python `3.13.5`, and the
 small set of system tools used by the script (`git`, `curl`, `tar`,
 `sha256sum`, `mktemp`, `find`, `wc`, `date`, `awk`, `cmp`, `xargs`, `sort`,
-`grep`, `uname`, `basename`, `dirname`, `install`, `cp`, `mkdir`, `chmod`, and
-`cat`). It sets `GOTOOLCHAIN=local` and `GOWORK=off`; an automatic Go toolchain
+`grep`, `uname`, `basename`, `dirname`, `install`, `cp`, `mkdir`, `chmod`,
+`cat`, and `timeout`). It sets `GOTOOLCHAIN=local` and `GOWORK=off`; an automatic Go toolchain
 download is therefore a failure. Ambient endpoint, capture, and bridge
 variables are rejected before the output directory is created.
 
@@ -49,15 +50,38 @@ this rejects an added, removed, or differently resolved module.
 
 The custom model is the pinned upstream `model/` directory plus
 `integration/conformance/registry/netflow-extension.yaml`. The extension
-declares the nine project metrics and the two Collector helper metrics, with
-`exporter`, `message_kind`, `outcome`, `reason`, `loss_class`, and `data_type`
-at the required levels recorded by the pilot. Weaver validates both registry
-trees before the live checks.
+declares the twelve project metrics and the two Collector helper metrics, with
+`exporter`, `message_kind`, `outcome`, `reason`, `rejection_reason`, `loss_class`, and `data_type`
+at their declared required levels. Weaver validates both registry trees before
+the live checks.
+
+The rejected-record counter requires `exporter` and `rejection_reason`, with
+unit `{record}` and a monotonic Int64 sum. Its thirteen fixed reasons are
+`unsupported_body`, `missing_field`, `invalid_type`, `invalid_value`, `map_miss`,
+`family_mismatch`, `protocol_mismatch`, `time_invalid`, `custom_unavailable`,
+`custom_invalid`, `record_too_large`, `record_invalid`, and `other`.
+This vocabulary is separate from the unchanged admission/operation `reason`
+union. There are at most 48 local series per exporter instance. The probe must
+produce a nonzero rejected-record point through its real invalid-record path;
+the Python bridge never synthesizes it.
+
+The applicable conformance fixture also observes both enabled lifetime gauges
+through the production callback on a published v5/v9 runtime. Remaining has
+unit `s`, a finite nonnegative Float64 value, and only the trusted `exporter`
+attribute; exhausted has unit `1`, an Int64 value of exactly zero or one, and
+the same attribute rule. Remaining zero can precede the actual exhaustion
+latch. Quiet observation changes neither state nor counters. Pre-start, failed
+initial candidates, IPFIX and closed runtimes intentionally have no lifetime
+points; these absence rules are qualified by the SDK lifecycle tests, not by
+weakening this applicable fixture's fourteen-signal requirement. The bridge
+does not invent points. Fresh-evidence guards remove/duplicate each gauge,
+corrupt types/units/attributes/scalars, reject invented sum metadata, and verify
+that OTLP replay keeps each gauge separate from sums.
 
 The runner receives two separate scenario packages. The upstream package has
 one valid scenario. The custom package has `valid`,
 `type_mismatch_control`, and `missing_required_outcome_control`; all three
-declare the same 11 metric names. The four runner sessions are kept separate:
+declare the same 14 metric names. The four runner sessions are kept separate:
 
 | Session | Expected result |
 | --- | --- |
@@ -89,7 +113,15 @@ For every scenario, `scripts/conformance/replay.py` performs these steps:
    schema URL, scope name/version/attributes and schema URL, metric metadata,
    cumulative temporality, typed point attributes, timestamps, and values. It
    fails closed unless the nested scope metrics and flattened summary agree
-   and all 11 names are present exactly once.
+   and all 14 names are present exactly once. Each instrument must retain its
+   expected unit and scalar type. Existing Int64 sums retain monotonicity and
+   cumulative temporality, including exact integers above `2^53`; gauges have
+   neither sum property. Remaining uses Float64/OTLP `as_double`, and exhausted
+   uses Int64/OTLP `as_int`. The JSON serializer preserves integral Float64
+   values as floating numbers (for example `0.0`), without converting counters.
+   Rejection points require exactly the two string attributes above and a
+   known reason. Fresh-evidence guards remove/duplicate that signal, remove
+   or corrupt its reason, and corrupt its metadata to prove these checks fail.
 4. It locates the first point of the exact `records` metric. For the type
    control it changes only `outcome` from a string to an int64. For the
    requiredness control it removes only `outcome`. Both mutations happen after
@@ -100,7 +132,7 @@ For every scenario, `scripts/conformance/replay.py` performs these steps:
    `http://host:port` spelling only as an insecure gRPC endpoint, rejects HTTPS
    and paths, and fails on OTLP partial success.
 
-The 11 required signal names are:
+The 14 required signal names are:
 
 ```text
 otelcol_netflow.exporter.admission
@@ -111,7 +143,10 @@ otelcol_netflow.exporter.endpoint_epochs
 otelcol_netflow.exporter.failures
 otelcol_netflow.exporter.losses
 otelcol_netflow.exporter.records
+otelcol_netflow.exporter.rejected_records
 otelcol_netflow.exporter.templates
+otelcol_netflow.exporter.uptime_remaining
+otelcol_netflow.exporter.uptime_exhausted
 otelcol_exporter_in_flight_requests
 otelcol_exporter_sent_log_records
 ```
@@ -123,8 +158,47 @@ complete-run reductions, `logs/` for setup, runner, and bounded Go probe logs,
 `report.md` for the run-level boundary and result statement. The source hash
 record includes the root module files, the pilot test, the serializer,
 scenario definitions, replay/verifier scripts, requirements, the runner, the
-graph pin, and `scripts/ci/capture.py`. Those hashes are recomputed after all
-sessions and a change aborts the run.
+graph pin, and `scripts/ci/capture.py`. The hash set and the pre-setup
+regular-file guard now additionally cover:
+
+```text
+internal/destination/rejection.go
+internal/destination/ledger.go
+internal/destination/packer.go
+internal/destination/lifetime.go
+internal/destination/lifetime_test.go
+internal/destination/state.go
+internal/destination/lifecycle.go
+internal/destination/publication.go
+internal/destination/refresh.go
+clock.go
+config.go
+factory.go
+exporter.go
+telemetry_lifetime.go
+telemetry_lifetime_test.go
+clock_test.go
+metadata.yaml
+documentation.md
+telemetry.go
+telemetry_acceptance_test.go
+telemetry_rejection_test.go
+internal/metadata/generated_telemetry.go
+internal/metadata/generated_telemetry_test.go
+internal/metadatatest/generated_telemetrytest.go
+internal/metadatatest/generated_telemetrytest_test.go
+```
+
+These inputs were not covered by the historical harness hashes. All source
+hashes are recomputed after the sessions and guards; a change aborts the run.
+`test_maintained_input_guards` runs a private copied runner with each added
+input missing or replaced by a symlink, asserting failure before setup or
+output creation. `test_maintained_input_drift` executes the runner's actual
+baseline and comparison blocks in a private copied input tree, with an
+unchanged control and in-place edits/regular-file replacements after baseline
+capture. It needs no network setup. These hashes bind current source during a
+run; they cannot authenticate an arbitrary regular replacement made before
+capture. Generation and behavioral gates qualify that current source.
 
 The precise output limits apply to the complete selected run tree. Every file
 under `logs/` is at most 1 MiB, and the sum of all regular files under the run
@@ -141,5 +215,7 @@ This harness demonstrates the current exporter self-telemetry contract against
 one task-local custom registry and records the separate findings produced by a
 pinned upstream registry. It does not establish upstream standardization,
 NetFlow or IPFIX wire interoperability, independent UDP receipt, appliance
-ingestion, hosted service behavior, or a capacity limit. CI wiring, metadata
-publication and other follow-up work remain separate maintainer decisions.
+ingestion, actual operator export/scraping, hosted service behavior, or a capacity limit.
+The injected SDK reader and runtime seam establish capture fidelity; actual
+operator observation is covered separately by the Collector integration tests. CI wiring, metadata
+publication, and other follow-up work remain separate maintainer decisions.

@@ -1,8 +1,11 @@
 # Alpha release notes and publication checklist
 
-`v0.1.0-alpha.1` is planned and unpublished. This checkout is suitable for
-local build and review; it does not establish a public tag, anonymous module
-retrieval, a maintained binary or image, or a hosted CI result.
+Existing public tag `v0.1.0` points at the earlier public baseline. The current
+source fixes are untagged. `v0.1.0-alpha.1` is a synthetic local staging
+version used only by `check-consumer.sh`; it is unpublished and cannot be
+fetched from a public module proxy. This checkout is suitable for local build
+and review; it does not establish anonymous module retrieval, a maintained
+binary or image, or a hosted CI result.
 
 ## Component
 
@@ -21,6 +24,20 @@ factory. Recommended profiles are IPFIX Unix-millisecond general and timed v9;
 legacy v9 time-free and IPFIX NTP layouts remain explicit alternatives.
 Records are packetized at record boundaries, cancellation and partial failures
 are reported, and named destinations have separate protocol state.
+
+## Untagged source changes
+
+Compared with the `v0.1.0` baseline, current source adds cancelable waiting for
+internal maintenance while preserving immediate busy responses for a second
+request, independent next-hop family validation at selected wire slots, and
+bounded configuration diagnostics. Fixed rejection-reason counters and v5/v9
+lifetime gauges make local drops and terminal uptime exhaustion observable.
+The operator examples enable metrics through `NETFLOW_METRICS_PORT`.
+
+The mapping coverage manifest uses version 2, with pinned source declarations
+and semantic table checks instead of whole-document hashes. Ordinary
+regressions and the reusable conformance and Collector checks accompany these
+changes. These source changes have no newly selected release tag.
 
 ## Known limits
 
@@ -57,8 +74,9 @@ compatibility, or broad platform support.
 ## Before publishing a tag
 
 Run the checks against the exact commit selected for the tag. Set the ports,
-endpoints and uptime origins from the [operator guide](operator-guide.md#build-and-run-the-example)
-before validating the configuration. Copy the binary outside the checkout;
+endpoints, loopback `NETFLOW_METRICS_PORT` and uptime origins from the
+[operator guide](operator-guide.md#build-and-run-the-example) before validating
+the configuration. Copy the binary outside the checkout;
 OCB also generates an ignored `dist/ocb/` build directory:
 
 ```bash

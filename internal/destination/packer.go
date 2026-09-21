@@ -127,6 +127,15 @@ func (r *PackResult) Counts() SourceLedgerCounts {
 	return r.ledger.Counts()
 }
 
+// RejectionCounts returns a value-copy fixed histogram of invalid source
+// records. The returned array does not alias the request ledger.
+func (r *PackResult) RejectionCounts() RejectionCounts {
+	if r == nil || r.ledger == nil {
+		return RejectionCounts{}
+	}
+	return r.ledger.RejectionCounts()
+}
+
 // Packet returns a value copy of the final active-packet boundary. A completed
 // request normally has no active packet; it is exposed for diagnostic parity
 // with sourceLedger and is never a mutable reference.
@@ -329,7 +338,7 @@ func (p *Packer) result(outcome PackOutcome) *PackResult {
 // for every record-local outcome so later ordinals receive validation too.
 func (p *Packer) consume(ctx context.Context, lookup IndexedLookup, ordinal uint64, normalized wire.NormalizedRecord, normalizeErr error) error {
 	if normalizeErr != nil {
-		if err := p.ledger.addSource(ordinal, false); err != nil {
+		if err := p.ledger.addSourceReason(ordinal, false, classifyNormalizeError(normalizeErr)); err != nil {
 			p.internal = true
 			p.stopped = true
 		}
@@ -344,7 +353,7 @@ func (p *Packer) consume(ctx context.Context, lookup IndexedLookup, ordinal uint
 	}
 	mapped, err := p.state.Mapping().MapWithStats(normalized, mappingLookup)
 	if err != nil {
-		if addErr := p.ledger.addSource(ordinal, false); addErr != nil {
+		if addErr := p.ledger.addSourceReason(ordinal, false, classifyMappingError(err)); addErr != nil {
 			p.internal = true
 			p.stopped = true
 		}
@@ -360,12 +369,12 @@ func (p *Packer) consume(ctx context.Context, lookup IndexedLookup, ordinal uint
 
 	shapeIndex, ok := p.shapeIndex(mapped.Record)
 	if !ok {
-		p.invalidate(ordinal)
+		p.invalidate(ordinal, RejectionFamilyMismatch)
 		return nil
 	}
 	sampling, ok := p.sampling(normalized)
 	if !ok {
-		p.invalidate(ordinal)
+		p.invalidate(ordinal, RejectionInvalidValue)
 		return nil
 	}
 
@@ -383,8 +392,8 @@ func (p *Packer) consume(ctx context.Context, lookup IndexedLookup, ordinal uint
 	}
 
 	if !p.packetOpen {
-		if !p.minimumDataPacketFits(mapped.Record, shapeIndex) {
-			p.invalidate(ordinal)
+		if fits, reason := p.minimumDataPacketFits(mapped.Record, shapeIndex); !fits {
+			p.invalidate(ordinal, reason)
 			return nil
 		}
 		if !p.openData(ctx, shapeIndex, sampling) {
@@ -399,8 +408,8 @@ func (p *Packer) consume(ctx context.Context, lookup IndexedLookup, ordinal uint
 				p.previewUnsent(ordinal, mapped.Record, shapeIndex, sampling)
 				return nil
 			}
-			if !p.minimumDataPacketFits(mapped.Record, shapeIndex) {
-				p.invalidate(ordinal)
+			if fits, reason := p.minimumDataPacketFits(mapped.Record, shapeIndex); !fits {
+				p.invalidate(ordinal, reason)
 				return nil
 			}
 			if !p.openData(ctx, shapeIndex, sampling) {
@@ -418,7 +427,7 @@ func (p *Packer) consume(ctx context.Context, lookup IndexedLookup, ordinal uint
 			p.packetOpen = false
 		}
 		if isRecordRejection(err) {
-			p.invalidate(ordinal)
+			p.invalidate(ordinal, classifyWireError(err))
 			return nil
 		}
 		p.abortDataInternal()
@@ -743,7 +752,7 @@ func (p *Packer) previewUnsent(ordinal uint64, record wire.WireRecord, shapeInde
 	if err := p.validation.Append(record); err != nil {
 		p.validation.Reset()
 		if isRecordRejection(err) {
-			p.invalidate(ordinal)
+			p.invalidate(ordinal, classifyWireError(err))
 			return
 		}
 		p.internal = true
@@ -759,22 +768,39 @@ func (p *Packer) previewUnsent(ordinal uint64, record wire.WireRecord, shapeInde
 	p.validation.Reset()
 }
 
-func (p *Packer) minimumDataPacketFits(record wire.WireRecord, shapeIndex int) bool {
+func (p *Packer) minimumDataPacketFits(record wire.WireRecord, shapeIndex int) (bool, RejectionReason) {
 	shape, ok := p.state.Catalog().ShapeAt(shapeIndex)
 	if !ok {
-		return false
+		return false, RejectionRecordInvalid
 	}
 	recordBytes, err := shape.RecordSize(record)
 	if err != nil {
-		return false
+		// A direct bounds result from a validated shape is produced only by a
+		// descriptor/value byte limit or checked record-length arithmetic. The
+		// other trusted record errors describe shape/value validity, not size.
+		if sameTrustedError(err, wire.ErrRecordValueLimit) || sameTrustedError(err, wire.ErrBounds) {
+			return false, RejectionRecordTooLarge
+		}
+		return false, RejectionRecordInvalid
 	}
 	dataSet, err := shape.DataSetSizeForEncoded(recordBytes, 1)
 	if err != nil {
-		return false
+		if sameTrustedError(err, wire.ErrBounds) {
+			return false, RejectionRecordTooLarge
+		}
+		return false, RejectionRecordInvalid
 	}
 	config := p.state.Config()
 	total, ok := checkedPacketLength(config.Protocol, 0, 0, dataSet.Length())
-	return ok && total <= config.MaxDatagramSize && total <= uint64(len(p.datagram))
+	if !ok {
+		// An injected or corrupted protocol value makes the arithmetic helper
+		// unable to establish a byte-capacity cause.
+		return false, RejectionOther
+	}
+	if total > config.MaxDatagramSize || total > uint64(len(p.datagram)) {
+		return false, RejectionRecordTooLarge
+	}
+	return true, RejectionOther
 }
 
 func (p *Packer) previewInstantAt() uint64 {
@@ -806,15 +832,11 @@ func (p *Packer) previewHeader(wall uint64, sampling uint32) (wire.HeaderMetadat
 	return header, err == nil
 }
 
-func (p *Packer) invalidate(ordinal uint64) {
-	if p.ledger.Classification(ordinal) != SourceUnsentValid {
+func (p *Packer) invalidate(ordinal uint64, reason RejectionReason) {
+	if err := p.ledger.invalidate(ordinal, reason); err != nil {
 		p.internal = true
 		p.stopped = true
-		return
 	}
-	p.ledger.valid--
-	p.ledger.invalid++
-	p.ledger.setStoredClass(ordinal, SourceInvalid)
 }
 
 func (p *Packer) clock() (wall, mono uint64) {

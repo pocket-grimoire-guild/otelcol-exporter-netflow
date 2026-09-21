@@ -73,7 +73,16 @@ service:
     logs:
       encoding: json
     metrics:
-      level: none
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: ${env:NETFLOW_METRICS_PORT}
+                without_scope_info: true
+                without_units: true
+                without_type_suffix: true
   pipelines:
     logs/v5:
       receivers: [netflow/v5]

@@ -252,6 +252,16 @@ ceilings. The former `limits` configuration block has been removed; Collector
 configuration decoding rejects it as an unknown option. With queue/retry disabled,
 helper invokes the pusher synchronously.
 
+The admitted caller retains that request slot through helper return and any
+failed-subset copy. If internal template refresh or endpoint publication owns
+send serialization, the caller waits with its context; maintenance contention
+does not return `busy`. A second external caller still fails immediately before
+preflight or helper entry. Direct runtime packing has its own single registered
+operation slot, so it cannot accumulate additional waiters. Cancellation before
+packing returns fixed transient unavailable (or closed when shutdown is
+observed), without constructing packets or a result ledger. This wait adds no
+retry, pdata queue, goroutine or fairness guarantee.
+
 Normalization and packing stream one log at a time. A fixed view of at most
 64 selected field references borrows pdata scalars until the writer copies them
 into a datagram bounded by `max_datagram_size`; no request-wide normalized slice
@@ -321,16 +331,22 @@ The wrapper implements those guarantees around the helper:
 2. One lifecycle mutex linearizes closing, admitted calls, maintenance
    registration, candidate handles, and the published handle. A candidate
    operation token is registered before resolve/dial, and the returned socket is
-   attached before its first bootstrap write. Published sends take the send
-   mutex, briefly register a write under lifecycle, release lifecycle, then
-   retain send while writing. Publication takes send then lifecycle, rechecks
-   closing/generation, swaps handle/state, and unlocks in reverse order. No path
-   takes send while holding lifecycle.
+   attached before its first bootstrap write. Packing registers its sole
+   cancelable operation and active call under lifecycle before waiting outside
+   lifecycle for a capacity-one send permit. After acquiring it, packing rechecks
+   closing/cancellation and reads the current endpoint under lifecycle. It keeps
+   the permit through writes, full-write commits and state cleanup. Refresh and
+   publication use their registered contexts to acquire the same permit;
+   publication then takes lifecycle, rechecks closing/generation and swaps
+   handle/state. No path waits for send while holding lifecycle, and cleanup
+   releases only an owned permit before ending registration.
 3. `sync.Once`-guarded Shutdown marks closing and detaches all handles under the
    lifecycle mutex, unlocks before canceling contexts or closing sockets, and
-   closes each detached socket once without waiting behind the send mutex. Close
-   or deadline interrupts a stalled write. The wrapper joins admitted calls and
-   registered workers, then invokes helper Shutdown exactly once. A losing
+   closes each detached socket once without waiting for the send permit. It
+   cancels registered permit waiters; Close or deadline interrupts a stalled
+   write. A completed full write still commits if cancellation follows it. The
+   wrapper joins admitted calls, Pack waiters and registered workers, then
+   invokes helper Shutdown exactly once. A losing
    candidate closes once; repeated/concurrent Shutdown waits for or returns the
    stored result, and Shutdown before Start is safe.
 4. Shutdown uses the earlier of caller deadline and `shutdown_drain_timeout`.

@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/collector/confmap/confmaptest"
 	"math"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 )
@@ -53,45 +54,46 @@ func TestConfig(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		mutate func(*Config)
+		want   string
 	}{
-		{"protocol", func(c *Config) { c.Protocol = "sflow" }},
-		{"schema", func(c *Config) { c.Schema = "latest" }},
-		{"identity_absent", func(c *Config) { c.Identity.ObservationDomainID = nil }},
-		{"inactive_zero_identity", func(c *Config) { c.Identity.SourceID = ptr(uint32(0)) }},
-		{"both_selectors", func(c *Config) { c.Mapping.Fields = ptr([]FieldSelection{{Canonical: "source.port"}}) }},
-		{"no_selector", func(c *Config) { c.Mapping.Profile = nil }},
-		{"empty_profile", func(c *Config) { c.Mapping.Profile = ptr("") }},
-		{"empty_fields", func(c *Config) { c.Mapping.Profile = nil; c.Mapping.Fields = ptr([]FieldSelection{}) }},
-		{"wrong_profile", func(c *Config) { c.Mapping.Profile = ptr(mapping.ProfileV9) }},
-		{"no_policy", func(c *Config) { c.Mapping.LossPolicy = nil }},
-		{"loss_unacknowledged", func(c *Config) { c.Mapping.LossPolicy = ptr(mapping.LossPolicyReject) }},
-		{"token_mismatch", func(c *Config) { c.Mapping.ProtocolIdentifiers[0].Number = 7 }},
-		{"family_map", func(c *Config) { c.Mapping.NetworkTypeVersions = nil }},
-		{"queue", func(c *Config) { c.SendingQueue.Enabled = true }},
-		{"retry", func(c *Config) { c.RetryOnFailure.Enabled = true }},
-		{"payload_zero", func(c *Config) { c.MaxDatagramSize = 0 }},
-		{"payload_unasserted", func(c *Config) { c.MaxDatagramSize = 465 }},
-		{"payload_max", func(c *Config) { c.MaxDatagramSize = 65508 }},
-		{"mtu_zero", func(c *Config) { c.PathMTU = ptr(uint64(0)) }},
+		{"protocol", func(c *Config) { c.Protocol = "sflow" }, "rule=protocol path=protocol"},
+		{"schema", func(c *Config) { c.Schema = "latest" }, "rule=schema path=schema"},
+		{"identity_absent", func(c *Config) { c.Identity.ObservationDomainID = nil }, "rule=identity path=identity"},
+		{"inactive_zero_identity", func(c *Config) { c.Identity.SourceID = ptr(uint32(0)) }, "rule=identity path=identity"},
+		{"both_selectors", func(c *Config) { c.Mapping.Fields = ptr([]FieldSelection{{Canonical: "source.port"}}) }, "rule=mapping path=mapping"},
+		{"no_selector", func(c *Config) { c.Mapping.Profile = nil }, "rule=mapping path=mapping"},
+		{"empty_profile", func(c *Config) { c.Mapping.Profile = ptr("") }, "rule=mapping path=mapping"},
+		{"empty_fields", func(c *Config) { c.Mapping.Profile = nil; c.Mapping.Fields = ptr([]FieldSelection{}) }, "rule=mapping path=mapping"},
+		{"wrong_profile", func(c *Config) { c.Mapping.Profile = ptr(mapping.ProfileV9) }, "rule=compile_profile path=mapping.profile protocol=ipfix"},
+		{"no_policy", func(c *Config) { c.Mapping.LossPolicy = nil }, "rule=mapping_policy_required path=mapping.loss_policy"},
+		{"loss_unacknowledged", func(c *Config) { c.Mapping.LossPolicy = ptr(mapping.LossPolicyReject) }, "rule=compile_policy path=mapping.loss_policy protocol=ipfix"},
+		{"token_mismatch", func(c *Config) { c.Mapping.ProtocolIdentifiers[0].Number = 7 }, "rule=compile_token path=mapping.protocol_identifiers protocol=ipfix"},
+		{"family_map", func(c *Config) { c.Mapping.NetworkTypeVersions = nil }, "rule=compile_provenance path=mapping.network_type_versions protocol=ipfix"},
+		{"queue", func(c *Config) { c.SendingQueue.Enabled = true }, "rule=queue path=sending_queue.enabled"},
+		{"retry", func(c *Config) { c.RetryOnFailure.Enabled = true }, "rule=retry path=retry_on_failure.enabled"},
+		{"payload_zero", func(c *Config) { c.MaxDatagramSize = 0 }, "rule=max_datagram_size path=max_datagram_size"},
+		{"payload_unasserted", func(c *Config) { c.MaxDatagramSize = 465 }, "rule=compile_pmtu path=path_mtu protocol=ipfix"},
+		{"payload_max", func(c *Config) { c.MaxDatagramSize = 65508 }, "rule=max_datagram_size path=max_datagram_size"},
+		{"mtu_zero", func(c *Config) { c.PathMTU = ptr(uint64(0)) }, "rule=path_mtu_range path=path_mtu"},
 		{"hostname_mtu", func(c *Config) {
 			c.Endpoint = "collector.example:4739"
 			c.PathMTU = ptr(uint64(512))
 			c.MaxDatagramSize = 465
-		}},
-		{"record_zero", func(c *Config) { c.MaxRecordsPerMessage = ptr(uint16(0)) }},
-		{"record_max", func(c *Config) { c.MaxRecordsPerMessage = ptr(uint16(1025)) }},
-		{"template_id", func(c *Config) { c.Templates.IDBase = 65535 }},
-		{"copies_zero", func(c *Config) { c.Templates.InitialCopies = 0 }},
-		{"refresh_zero", func(c *Config) { c.Templates.RefreshInterval = 0 }},
-		{"count_zero", func(c *Config) { c.IPFIX.TemplateRefreshDataPackets = ptr(uint32(0)) }},
-		{"inactive_count", func(c *Config) { c.NetFlowV9.TemplateRefreshPackets = ptr(uint32(20)) }},
-		{"timeout_zero", func(c *Config) { c.Timeout = 0 }},
-		{"timeout_drain", func(c *Config) { c.Timeout = 6 * time.Second }},
-		{"drain_zero", func(c *Config) { c.ShutdownDrainTimeout = 0 }},
-		{"dns_timeout", func(c *Config) { c.DNS.Timeout = 6 * time.Second }},
-		{"dns_refresh", func(c *Config) { c.DNS.RefreshInterval = 0 }},
-		{"dns_stale", func(c *Config) { c.DNS.StaleAfter = time.Second }},
-		{"inactive_uptime", func(c *Config) { c.UptimeOrigin = ptr(uint64(0)) }},
+		}, "rule=compile_pmtu path=max_datagram_size protocol=ipfix"},
+		{"record_zero", func(c *Config) { c.MaxRecordsPerMessage = ptr(uint16(0)) }, "rule=record_limit path=max_records_per_message"},
+		{"record_max", func(c *Config) { c.MaxRecordsPerMessage = ptr(uint16(1025)) }, "rule=record_limit path=max_records_per_message"},
+		{"template_id", func(c *Config) { c.Templates.IDBase = 65535 }, "rule=template_allocation path=templates.id_base protocol=ipfix"},
+		{"copies_zero", func(c *Config) { c.Templates.InitialCopies = 0 }, "rule=template_initial_copies path=templates.initial_copies"},
+		{"refresh_zero", func(c *Config) { c.Templates.RefreshInterval = 0 }, "rule=template_refresh_interval path=templates.refresh_interval"},
+		{"count_zero", func(c *Config) { c.IPFIX.TemplateRefreshDataPackets = ptr(uint32(0)) }, "rule=ipfix_refresh_packets path=ipfix.template_refresh_data_packets"},
+		{"inactive_count", func(c *Config) { c.NetFlowV9.TemplateRefreshPackets = ptr(uint32(20)) }, "rule=v9_refresh_packets path=netflow_v9.template_refresh_packets"},
+		{"timeout_zero", func(c *Config) { c.Timeout = 0 }, "rule=write_timeout_range path=timeout"},
+		{"timeout_drain", func(c *Config) { c.Timeout = 6 * time.Second }, "rule=write_timeout_drain path=timeout"},
+		{"drain_zero", func(c *Config) { c.ShutdownDrainTimeout = 0 }, "rule=write_timeout_drain path=timeout"},
+		{"dns_timeout", func(c *Config) { c.DNS.Timeout = 6 * time.Second }, "rule=dns_timeout_drain path=dns.timeout"},
+		{"dns_refresh", func(c *Config) { c.DNS.RefreshInterval = 0 }, "rule=dns_refresh_range path=dns.refresh_interval"},
+		{"dns_stale", func(c *Config) { c.DNS.StaleAfter = time.Second }, "rule=dns_stale_refresh path=dns.stale_after"},
+		{"inactive_uptime", func(c *Config) { c.UptimeOrigin = ptr(uint64(0)) }, "rule=identity path=identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := validConfig("ipfix")
@@ -103,8 +105,8 @@ func TestConfig(t *testing.T) {
 			if err == nil {
 				t.Fatal("accepted invalid config")
 			}
-			if err.Error() != "netflow: invalid configuration" {
-				t.Fatal(err)
+			if !strings.Contains(err.Error(), tc.want+"; ") {
+				t.Fatalf("diagnostic=%q want %q", err, tc.want)
 			}
 		})
 	}

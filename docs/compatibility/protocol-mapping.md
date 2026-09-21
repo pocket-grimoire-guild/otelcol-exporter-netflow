@@ -130,24 +130,34 @@ formatted `ProtoProducerMessage` body is unsupported and is not datagram
 passthrough.  Resource and scope attributes remain provenance only and cannot
 select a receiver version or fill a flow field.
 
-Missing required canonical keys, invalid address placeholders (`invalid IP`),
-family mismatches, protocol mismatches, and out-of-range values reject that
-record for the affected destination.  The optional `flow.next_hop` and
-`flow.bgp_next_hop` keys may be omitted.  Zero and sentinel values are retained
-as values; they are never guessed, replaced, or used to infer protocol, family,
-sampling mode, or boot time.  Any narrowing, reduced-size encoding, or timestamp
-conversion is range-checked; there is no clamp or truncation.  An unsupported
-field that is required by a destination's configured template rejects the
-record for that destination; an unsupported optional field is omitted and
-accounted as exporter loss.
+Missing required canonical keys, malformed addresses (including `invalid IP`),
+inconsistent source/destination families, protocol mismatches, and out-of-range
+values reject that record for the affected destination.  The optional
+`flow.next_hop` and `flow.bgp_next_hop` keys may be omitted unless selected by
+the destination.  Each valid hop may have an independent IP family when
+unselected, without changing the flow family or mapped output.  A selected
+hop must match its descriptor's family and width (4 bytes for IPv4, 16 for
+IPv6); v5 always selects an IPv4 next hop and has no BGP next-hop slot.
+Malformed present hops reject even when unselected.  Zero and sentinel values
+are retained as values; they are never guessed, replaced, or used to infer
+protocol, family, sampling mode, or boot time.  Any narrowing, reduced-size
+encoding, or timestamp conversion is range-checked; there is no clamp or
+truncation. Unsupported or inapplicable selected arms fail configuration;
+`encode_and_count` accepts only documented supported exact, lossy, or synthesized
+transformations, and only selected lossy or synthesized bindings contribute
+exporter loss. A valid unselected field contributes no mapping or loss count
+merely because it is absent from output.
 
 `Canonical-source loss` is information already discarded by the pinned
 receiver/goflow2 path (for example, IN/OUT counter overwrite, an unknown
 protocol/EtherType number rendered as a token, or an IPFIX observation-point
 value narrowed to protobuf `uint32`).  `Exporter loss` is introduced here by a
-target's inapplicable field, width gate, timestamp quantization, or an explicit
-optional omission.  The exporter records these classes separately; it never
-claims to recover canonical-source loss.
+selected target's documented supported lossy or synthesized transformation,
+such as a representable width conversion or timestamp quantization. Unsupported
+and inapplicable selected arms fail configuration rather than becoming loss or
+omission. The exporter records these classes separately; it never claims to
+recover canonical-source loss. See the detailed
+[loss contract](default-profiles.md#loss-errors-and-diagnostics).
 
 NetFlow v5 uses a fixed 24-byte header and 48-byte flow record, with a
 1..30-record packet count from Cisco tables B-3/B-4.  It has no Source ID:

@@ -59,8 +59,10 @@ func (r *Runtime) publish(ctx context.Context, attempt *candidateAttempt, token 
 			_ = retired.candidate.Close()
 		}
 	}()
-	r.send.Lock()
-	defer r.send.Unlock()
+	if !r.send.acquire(ctx) {
+		return ErrRuntimeUnavailable
+	}
+	defer r.send.release()
 	r.lifecycle.Lock()
 	defer r.lifecycle.Unlock()
 	if r.closing || ctx.Err() != nil || r.attempt != attempt || attempt.candidate != next.candidate || r.published != attempt.previous || !next.state.Epoch().Ready {

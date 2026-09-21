@@ -167,6 +167,33 @@ func assertTimeRefreshResolverTrace(t *testing.T, lookup *testtransport.Resolver
 	}
 }
 
+func timeRefreshHeaderCase(protocol string) transitionHeaderCase {
+	switch protocol {
+	case "netflow_v5":
+		return transitionHeaderCase{
+			want: transitionHeaderExpectation{sequence: []uint32{0, 3, 6}, identity: []uint32{0, 0}},
+		}
+	case "netflow_v9":
+		return transitionHeaderCase{
+			want: transitionHeaderExpectation{sequence: []uint32{4, 5, 6, 7, 8}, identity: []uint32{0}},
+			mutants: []transitionHeaderMutation{{
+				name: "omitted-refresh-charge", field: "cflow.sequence",
+				values: []uint32{4, 4, 4, 5, 6},
+			}},
+		}
+	case "ipfix":
+		return transitionHeaderCase{
+			want: transitionHeaderExpectation{sequence: []uint32{0, 0, 0, 3, 6}, identity: []uint32{0}},
+			mutants: []transitionHeaderMutation{{
+				name: "spurious-refresh-charge", field: "cflow.sequence",
+				values: []uint32{0, 1, 2, 5, 8},
+			}},
+		}
+	default:
+		panic("unknown time-refresh protocol: " + protocol)
+	}
+}
+
 func TestTemplateRefreshTimeDeadlineRealUDP(t *testing.T) {
 	// This is a bounded monotonic-clock direct pushLogs supplement. It proves
 	// local UDP handoff and independent receipt/cache decode; it is not an
@@ -258,7 +285,7 @@ func TestTemplateRefreshTimeDeadlineRealUDP(t *testing.T) {
 				for _, packet := range data {
 					assertTimeRefreshPeer(t, startup[0], packet)
 				}
-				dir := runDNSTransitionTShark(t, protocol, "refresh", port, append(append([]dnsTransitionDatagram{}, refresh...), data...), [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}})
+				dir := runDNSTransitionTShark(t, ctx, protocol, "refresh", port, append(append([]dnsTransitionDatagram{}, refresh...), data...), [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}}, timeRefreshHeaderCase(protocol))
 				snapshot := assertTimeRefreshMetrics(t, fixture, protocol, startup, refresh, data)
 				if dir != "" {
 					writeConditionalSnapshot(t, filepath.Join(dir, "telemetry-snapshot.json"), snapshot)
@@ -279,7 +306,7 @@ func TestTemplateRefreshTimeDeadlineRealUDP(t *testing.T) {
 				for _, packet := range data[1:] {
 					assertTimeRefreshPeer(t, peer, packet)
 				}
-				dir := runDNSTransitionTShark(t, protocol, "control", port, data, [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}})
+				dir := runDNSTransitionTShark(t, ctx, protocol, "control", port, data, [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}}, timeRefreshHeaderCase(protocol))
 				snapshot := assertTimeRefreshMetrics(t, fixture, protocol, startup, nil, data)
 				if dir != "" {
 					writeConditionalSnapshot(t, filepath.Join(dir, "telemetry-snapshot.json"), snapshot)

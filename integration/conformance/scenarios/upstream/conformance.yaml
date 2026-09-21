@@ -19,4 +19,7 @@ scenarios:
       - otelcol_netflow.exporter.failures
       - otelcol_netflow.exporter.losses
       - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.rejected_records
       - otelcol_netflow.exporter.templates
+      - otelcol_netflow.exporter.uptime_remaining
+      - otelcol_netflow.exporter.uptime_exhausted

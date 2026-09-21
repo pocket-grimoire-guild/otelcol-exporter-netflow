@@ -8,8 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +39,7 @@ type conformanceScope struct {
 }
 
 type conformancePoint struct {
-	Value             int64                  `json:"value"`
+	Value             any                    `json:"value"`
 	Attributes        []conformanceAttribute `json:"attributes"`
 	StartTimeUnixNano uint64                 `json:"start_time_unix_nano,omitempty"`
 	TimeUnixNano      uint64                 `json:"time_unix_nano,omitempty"`
@@ -47,7 +50,7 @@ type conformanceMetric struct {
 	Unit        string             `json:"unit"`
 	Description string             `json:"description"`
 	DataType    string             `json:"data_type"`
-	Monotonic   bool               `json:"monotonic"`
+	Monotonic   *bool              `json:"monotonic,omitempty"`
 	Temporality string             `json:"temporality,omitempty"`
 	Points      []conformancePoint `json:"points"`
 }
@@ -119,10 +122,22 @@ func conformanceScopeFromSDK(scope metricdata.ScopeMetrics) (conformanceScope, e
 	}, nil
 }
 
-func conformancePointFromSDK(value int64, attrs attribute.Set, start, timestamp time.Time) (conformancePoint, error) {
+func conformancePointFromSDK(value any, attrs attribute.Set, start, timestamp time.Time) (conformancePoint, error) {
 	pointAttrs, err := conformanceAttributes(attrs)
 	if err != nil {
 		return conformancePoint{}, err
+	}
+	if floating, ok := value.(float64); ok {
+		if math.IsNaN(floating) || math.IsInf(floating, 0) {
+			return conformancePoint{}, fmt.Errorf("nonfinite SDK gauge value")
+		}
+		// Preserve the scalar kind across JSON, including whole-valued Float64
+		// observations such as exhausted remaining=0. Integer sums stay int64.
+		encoded := strconv.FormatFloat(floating, 'g', -1, 64)
+		if !strings.ContainsAny(encoded, ".eE") {
+			encoded += ".0"
+		}
+		value = json.Number(encoded)
 	}
 	point := conformancePoint{Value: value, Attributes: pointAttrs}
 	if !start.IsZero() {
@@ -138,7 +153,7 @@ func conformanceMetricFromSDK(metric metricdata.Metrics) (conformanceMetric, err
 	result := conformanceMetric{Name: metric.Name, Unit: metric.Unit, Description: metric.Description}
 	switch data := metric.Data.(type) {
 	case metricdata.Sum[int64]:
-		result.DataType, result.Monotonic, result.Temporality = "sum[int64]", data.IsMonotonic, data.Temporality.String()
+		result.DataType, result.Monotonic, result.Temporality = "sum[int64]", &data.IsMonotonic, data.Temporality.String()
 		for _, value := range data.DataPoints {
 			point, err := conformancePointFromSDK(value.Value, value.Attributes, value.StartTime, value.Time)
 			if err != nil {
@@ -148,6 +163,15 @@ func conformanceMetricFromSDK(metric metricdata.Metrics) (conformanceMetric, err
 		}
 	case metricdata.Gauge[int64]:
 		result.DataType = "gauge[int64]"
+		for _, value := range data.DataPoints {
+			point, err := conformancePointFromSDK(value.Value, value.Attributes, value.StartTime, value.Time)
+			if err != nil {
+				return conformanceMetric{}, err
+			}
+			result.Points = append(result.Points, point)
+		}
+	case metricdata.Gauge[float64]:
+		result.DataType = "gauge[float64]"
 		for _, value := range data.DataPoints {
 			point, err := conformancePointFromSDK(value.Value, value.Attributes, value.StartTime, value.Time)
 			if err != nil {

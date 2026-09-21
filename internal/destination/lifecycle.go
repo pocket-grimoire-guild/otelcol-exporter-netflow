@@ -44,7 +44,7 @@ type RuntimeConfig struct {
 // admission and shutdown integration, rather than introduce a second handle
 // owner. send is always taken before lifecycle; Shutdown never waits for send.
 type Runtime struct {
-	send      sync.Mutex
+	send      sendPermit
 	lifecycle sync.Mutex
 
 	compiled    mapping.CompiledMapping
@@ -120,6 +120,7 @@ func NewRuntime(compiled mapping.CompiledMapping, writer wire.ContractWriter, co
 	return &Runtime{
 		compiled: compiled, writer: writer, config: config, dialer: dialer,
 		clock: clock, maintenance: maintenance, resolver: resolver,
+		send:    newSendPermit(),
 		drained: make(chan struct{}), shutdownDone: make(chan struct{}), dnsWake: make(chan struct{}, 1),
 		refreshWake: make(chan struct{}, 1),
 	}, nil
@@ -258,38 +259,55 @@ func (r *Runtime) finishAttempt(attempt *candidateAttempt) {
 	r.lifecycle.Unlock()
 }
 
-// Pack admits no waiting request. send covers the complete packer call and
-// its state/ledger commits; the transport callback takes only lifecycle.
+// Pack registers one operation before waiting for send. The permit covers the
+// complete packer call and its state/ledger commits; the transport callback
+// takes only lifecycle.
 func (r *Runtime) Pack(ctx context.Context, logs plog.Logs, lookup IndexedLookup) (*PackResult, error) {
 	if ctx == nil {
 		return nil, transport.ErrInvalidContext
 	}
-	if !r.send.TryLock() {
+	r.lifecycle.Lock()
+	if r.closing {
+		r.lifecycle.Unlock()
+		return nil, ErrRuntimeClosed
+	}
+	if r.packCancel != nil {
+		r.lifecycle.Unlock()
+		return nil, ErrRuntimeBusy
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	r.packCancel = cancel
+	r.activeCalls++
+	r.lifecycle.Unlock()
+	acquired := r.send.acquire(ctx)
+	defer r.finishPack(cancel, acquired)
+	if !acquired {
 		r.lifecycle.Lock()
 		closing := r.closing
 		r.lifecycle.Unlock()
 		if closing {
 			return nil, ErrRuntimeClosed
 		}
-		return nil, ErrRuntimeBusy
+		return nil, ErrRuntimeUnavailable
 	}
 	r.lifecycle.Lock()
 	current, closing := r.published, r.closing
+	canceled := ctx.Err() != nil
+	r.lifecycle.Unlock()
 	if closing {
-		r.lifecycle.Unlock()
-		r.send.Unlock()
 		return nil, ErrRuntimeClosed
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	r.packCancel = cancel
-	r.activeCalls++
-	r.lifecycle.Unlock()
-	defer r.finishPack(cancel)
+	if canceled {
+		return nil, ErrRuntimeUnavailable
+	}
+	if current == nil {
+		return nil, ErrRuntimeUnavailable
+	}
 	snapshot := r.resolver.Snapshot()
 	if snapshot.Due {
 		r.triggerDNS()
 	}
-	if current == nil || !snapshot.Available {
+	if !snapshot.Available || ctx.Err() != nil {
 		return nil, ErrRuntimeUnavailable
 	}
 	result, err := current.packer.Pack(ctx, logs, lookup)
@@ -302,13 +320,15 @@ func (r *Runtime) Pack(ctx context.Context, logs plog.Logs, lookup IndexedLookup
 	return result, err
 }
 
-func (r *Runtime) finishPack(cancel context.CancelFunc) {
+func (r *Runtime) finishPack(cancel context.CancelFunc, acquired bool) {
 	cancel()
 	r.lifecycle.Lock()
-	r.packCancel = nil
 	// Release send before completing admission. A new caller must still pass
 	// lifecycle before registering; shutdown observes all state cleanup done.
-	r.send.Unlock()
+	if acquired {
+		r.send.release()
+	}
+	r.packCancel = nil
 	r.endCallLocked()
 	r.lifecycle.Unlock()
 }

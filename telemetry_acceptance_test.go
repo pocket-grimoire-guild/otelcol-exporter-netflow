@@ -30,20 +30,23 @@ import (
 )
 
 const (
-	acceptanceMaxReasons = 16
-	acceptanceMaxSeries  = 96
+	acceptanceMaxReasons = 10
+	acceptanceMaxSeries  = 48
 )
 
 var acceptanceMetricAttributes = map[string]map[string]struct{}{
-	"admission":       {"exporter": {}, "reason": {}},
-	"bytes":           {"exporter": {}, "message_kind": {}, "outcome": {}},
-	"data_messages":   {"exporter": {}, "outcome": {}},
-	"dns":             {"exporter": {}, "outcome": {}},
-	"endpoint_epochs": {"exporter": {}},
-	"failures":        {"exporter": {}, "reason": {}},
-	"losses":          {"exporter": {}, "loss_class": {}},
-	"records":         {"exporter": {}, "outcome": {}},
-	"templates":       {"exporter": {}, "message_kind": {}, "outcome": {}},
+	"admission":        {"exporter": {}, "reason": {}},
+	"bytes":            {"exporter": {}, "message_kind": {}, "outcome": {}},
+	"data_messages":    {"exporter": {}, "outcome": {}},
+	"dns":              {"exporter": {}, "outcome": {}},
+	"endpoint_epochs":  {"exporter": {}},
+	"failures":         {"exporter": {}, "reason": {}},
+	"losses":           {"exporter": {}, "loss_class": {}},
+	"records":          {"exporter": {}, "outcome": {}},
+	"rejected_records": {"exporter": {}, "rejection_reason": {}},
+	"templates":        {"exporter": {}, "message_kind": {}, "outcome": {}},
+	"uptime_exhausted": {"exporter": {}},
+	"uptime_remaining": {"exporter": {}},
 }
 
 var acceptanceMetricValues = map[string]map[string]map[string]struct{}{
@@ -57,10 +60,17 @@ var acceptanceMetricValues = map[string]map[string]map[string]struct{}{
 	"failures":      {"reason": acceptanceSet("busy", "closed", "unavailable", "internal", "candidate", "bootstrap", "refresh")},
 	"losses":        {"loss_class": acceptanceSet("exporter", "canonical_source")},
 	"records":       {"outcome": acceptanceSet("confirmed", "invalid", "ambiguous", "unsent")},
+	"rejected_records": {"rejection_reason": acceptanceSet(
+		"other", "unsupported_body", "missing_field", "invalid_type", "invalid_value",
+		"map_miss", "family_mismatch", "protocol_mismatch", "time_invalid",
+		"custom_unavailable", "custom_invalid", "record_too_large", "record_invalid",
+	)},
 	"templates": {
 		"message_kind": acceptanceSet("bootstrap", "refresh"),
 		"outcome":      acceptanceSet("confirmed", "ambiguous"),
 	},
+	"uptime_exhausted": {},
+	"uptime_remaining": {},
 }
 
 func acceptanceSet(values ...string) map[string]struct{} {
@@ -123,6 +133,8 @@ const (
 	acceptanceDestMAC   = "de:ad:be:ef:ca:ff"
 	acceptanceSecretKey = "telemetry.secret.key"
 	acceptanceSecretVal = "telemetry.secret.value"
+	acceptanceCustomID  = "telemetry.custom.identity.secret"
+	acceptanceWrapper   = "telemetry.wrapper.error.secret"
 	acceptanceBody      = "telemetry.body.secret"
 	acceptancePayload   = "telemetry.payload.secret"
 	acceptanceRawError  = "telemetry.raw.error.secret"
@@ -140,6 +152,7 @@ func acceptanceCanaryLogs(body string) plog.Logs {
 	attrs.PutStr("flow.src_mac", acceptanceSourceMAC)
 	attrs.PutStr("flow.dst_mac", acceptanceDestMAC)
 	attrs.PutStr(acceptanceSecretKey, acceptanceSecretVal)
+	attrs.PutStr("custom.identity", acceptanceCustomID)
 	if body != "" {
 		record.Body().SetStr(body)
 	}
@@ -156,6 +169,11 @@ func acceptanceAssertLocalVocabulary(t *testing.T, metrics map[string]int64) {
 	for key := range metrics {
 		parts := strings.Split(key, "|")
 		name := parts[0]
+		if name == "rejected_records" {
+			if err := validateRejectedMetricKey(key); err != nil {
+				t.Fatalf("rejected_records contract: %v (%q)", err, key)
+			}
+		}
 		allowedAttrs, ok := acceptanceMetricAttributes[name]
 		if !ok {
 			t.Fatalf("unknown local metric %q", name)
@@ -207,7 +225,7 @@ func acceptanceAssertLocalVocabulary(t *testing.T, metrics map[string]int64) {
 func acceptanceAssertNoCanary(t *testing.T, values ...string) {
 	t.Helper()
 	for _, value := range values {
-		for _, canary := range []string{acceptanceEndpoint, acceptanceSourceIP, acceptanceDestIP, "2001:db8::77", acceptanceSourceMAC, acceptanceDestMAC, acceptanceSecretKey, acceptanceSecretVal, "PEN=424242", "template=65535", acceptanceBody, acceptancePayload, acceptanceRawError} {
+		for _, canary := range []string{acceptanceEndpoint, acceptanceSourceIP, acceptanceDestIP, "2001:db8::77", acceptanceSourceMAC, acceptanceDestMAC, acceptanceSecretKey, acceptanceSecretVal, acceptanceCustomID, acceptanceWrapper, "PEN=424242", "template=65535", acceptanceBody, acceptancePayload, acceptanceRawError} {
 			if strings.Contains(value, canary) {
 				t.Fatalf("diagnostic contains canary %q: %q", canary, value)
 			}
@@ -235,12 +253,19 @@ func acceptanceCheckAllMetricsForCanaries(t *testing.T, reader *sdkmetric.Manual
 	for _, scope := range rm.ScopeMetrics {
 		for _, metric := range scope.Metrics {
 			acceptanceAssertNoCanary(t, metric.Name)
-			sum, ok := metric.Data.(metricdata.Sum[int64])
-			if !ok {
-				continue
-			}
-			for _, point := range sum.DataPoints {
-				acceptanceAssertNoCanary(t, acceptanceAttributeTexts(point.Attributes.ToSlice())...)
+			switch data := metric.Data.(type) {
+			case metricdata.Sum[int64]:
+				for _, point := range data.DataPoints {
+					acceptanceAssertNoCanary(t, acceptanceAttributeTexts(point.Attributes.ToSlice())...)
+				}
+			case metricdata.Gauge[int64]:
+				for _, point := range data.DataPoints {
+					acceptanceAssertNoCanary(t, acceptanceAttributeTexts(point.Attributes.ToSlice())...)
+				}
+			case metricdata.Gauge[float64]:
+				for _, point := range data.DataPoints {
+					acceptanceAssertNoCanary(t, acceptanceAttributeTexts(point.Attributes.ToSlice())...)
+				}
 			}
 		}
 	}

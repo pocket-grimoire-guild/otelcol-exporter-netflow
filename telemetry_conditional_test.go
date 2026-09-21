@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/netip"
 	"os"
 	"sort"
@@ -205,6 +206,12 @@ func conditionalExporterWithHook(t *testing.T, provider *sdkmetric.MeterProvider
 		t.Fatal(err)
 	}
 	e.helper = helper
+	registration, err := tel.registerLifetime(metadata.Meter(set.TelemetrySettings), fixture.runtime)
+	if err != nil {
+		t.Fatalf("conditional lifetime registration: %v", err)
+	}
+	tel.lifetimeReg = registration
+	e.telemetry = tel
 	t.Cleanup(func() { _ = e.Shutdown(context.Background()) })
 	return e, fixture
 }
@@ -239,13 +246,13 @@ type conditionalMetric struct {
 	Unit        string             `json:"unit"`
 	Description string             `json:"description"`
 	DataType    string             `json:"data_type"`
-	Monotonic   bool               `json:"monotonic"`
+	Monotonic   *bool              `json:"monotonic,omitempty"`
 	Temporality string             `json:"temporality,omitempty"`
 	Points      []conditionalPoint `json:"points"`
 }
 
 type conditionalPoint struct {
-	Value      int64             `json:"value"`
+	Value      any               `json:"value"`
 	Attributes map[string]string `json:"attributes"`
 }
 
@@ -260,12 +267,17 @@ func conditionalSnapshotFromMetrics(rm *metricdata.ResourceMetrics) conditionalS
 			entry := conditionalMetric{Name: metric.Name, Unit: metric.Unit, Description: metric.Description}
 			switch data := metric.Data.(type) {
 			case metricdata.Sum[int64]:
-				entry.DataType, entry.Monotonic, entry.Temporality = "sum[int64]", data.IsMonotonic, data.Temporality.String()
+				entry.DataType, entry.Monotonic, entry.Temporality = "sum[int64]", ptr(data.IsMonotonic), data.Temporality.String()
 				for _, point := range data.DataPoints {
 					entry.Points = append(entry.Points, conditionalPoint{Value: point.Value, Attributes: conditionalAttributes(point.Attributes)})
 				}
 			case metricdata.Gauge[int64]:
 				entry.DataType = "gauge[int64]"
+				for _, point := range data.DataPoints {
+					entry.Points = append(entry.Points, conditionalPoint{Value: point.Value, Attributes: conditionalAttributes(point.Attributes)})
+				}
+			case metricdata.Gauge[float64]:
+				entry.DataType = "gauge[float64]"
 				for _, point := range data.DataPoints {
 					entry.Points = append(entry.Points, conditionalPoint{Value: point.Value, Attributes: conditionalAttributes(point.Attributes)})
 				}
@@ -294,12 +306,16 @@ func conditionalMetricValues(snapshot conditionalSnapshot) map[string]int64 {
 	values := make(map[string]int64)
 	for _, metric := range snapshot.Metrics {
 		for _, point := range metric.Points {
+			value, ok := point.Value.(int64)
+			if !ok {
+				continue
+			}
 			keys := make([]string, 0, len(point.Attributes))
 			for key, value := range point.Attributes {
 				keys = append(keys, key+"="+value)
 			}
 			sort.Strings(keys)
-			values[metric.Name+"|"+strings.Join(keys, "|")] += point.Value
+			values[metric.Name+"|"+strings.Join(keys, "|")] += value
 		}
 	}
 	return values
@@ -309,32 +325,71 @@ func conditionalAssertSDKContract(t *testing.T, snapshot conditionalSnapshot) {
 	t.Helper()
 	metrics := make(map[string]int64)
 	helperSeen := map[string]bool{}
+	lifetimeSeen := map[string]map[string]bool{}
 	for _, metric := range snapshot.Metrics {
 		if metric.Name == "otelcol_exporter_in_flight_requests" {
 			helperSeen[metric.Name] = true
-			if metric.DataType != "sum[int64]" || metric.Monotonic || metric.Unit != "{request}" {
+			if metric.DataType != "sum[int64]" || metric.Monotonic == nil || *metric.Monotonic || metric.Unit != "{request}" {
 				t.Fatalf("in_flight helper metric type=%s monotonic=%v unit=%q", metric.DataType, metric.Monotonic, metric.Unit)
 			}
 		}
 		if metric.Name == "otelcol_exporter_sent_log_records" {
 			helperSeen[metric.Name] = true
-			if metric.DataType != "sum[int64]" || !metric.Monotonic || metric.Unit != "{record}" {
+			if metric.DataType != "sum[int64]" || metric.Monotonic == nil || !*metric.Monotonic || metric.Unit != "{record}" {
 				t.Fatalf("sent_log_records helper metric type=%s monotonic=%v unit=%q", metric.DataType, metric.Monotonic, metric.Unit)
 			}
 		}
 		if strings.HasPrefix(metric.Name, "otelcol_netflow.exporter.") {
-			if metric.DataType != "sum[int64]" || !metric.Monotonic {
+			shortName := strings.TrimPrefix(metric.Name, "otelcol_netflow.exporter.")
+			if shortName == "uptime_exhausted" || shortName == "uptime_remaining" {
+				wantType, wantUnit := "gauge[int64]", "1"
+				if shortName == "uptime_remaining" {
+					wantType, wantUnit = "gauge[float64]", "s"
+				}
+				if metric.DataType != wantType || metric.Monotonic != nil || metric.Temporality != "" || metric.Unit != wantUnit {
+					t.Fatalf("project gauge %s type=%s monotonic=%v temporality=%q unit=%q", metric.Name, metric.DataType, metric.Monotonic, metric.Temporality, metric.Unit)
+				}
+				for _, point := range metric.Points {
+					if len(point.Attributes) != 1 || point.Attributes["exporter"] == "" {
+						t.Fatalf("lifetime gauge attributes=%v", point.Attributes)
+					}
+					if strings.HasPrefix(point.Attributes["exporter"], "netflow/ipfix-") {
+						t.Fatalf("IPFIX emitted lifetime gauge %s for %q", metric.Name, point.Attributes["exporter"])
+					}
+					if lifetimeSeen[point.Attributes["exporter"]] == nil {
+						lifetimeSeen[point.Attributes["exporter"]] = map[string]bool{}
+					}
+					lifetimeSeen[point.Attributes["exporter"]][shortName] = true
+					if shortName == "uptime_exhausted" {
+						value, ok := point.Value.(int64)
+						if !ok || (value != 0 && value != 1) {
+							t.Fatalf("invalid exhausted gauge value=%v", point.Value)
+						}
+					} else {
+						value, ok := point.Value.(float64)
+						if !ok || math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+							t.Fatalf("invalid remaining gauge value=%v", point.Value)
+						}
+					}
+				}
+				continue
+			}
+			if metric.DataType != "sum[int64]" || metric.Monotonic == nil || !*metric.Monotonic {
 				t.Fatalf("project metric %s type=%s monotonic=%v", metric.Name, metric.DataType, metric.Monotonic)
 			}
 			wantUnit := map[string]string{
 				"admission": "{request}", "bytes": "By", "data_messages": "{message}", "dns": "{lookup}",
-				"endpoint_epochs": "{epoch}", "failures": "{event}", "losses": "{event}", "records": "{record}", "templates": "{message}",
+				"endpoint_epochs": "{epoch}", "failures": "{event}", "losses": "{event}", "records": "{record}", "rejected_records": "{record}", "templates": "{message}",
 			}[strings.TrimPrefix(metric.Name, "otelcol_netflow.exporter.")]
 			if metric.Unit != wantUnit {
 				t.Fatalf("project metric %s unit=%q want %q", metric.Name, metric.Unit, wantUnit)
 			}
 		}
 		for _, point := range metric.Points {
+			value, ok := point.Value.(int64)
+			if !ok {
+				continue
+			}
 			keys := make([]string, 0, len(point.Attributes))
 			for key, value := range point.Attributes {
 				keys = append(keys, key+"="+value)
@@ -342,7 +397,7 @@ func conditionalAssertSDKContract(t *testing.T, snapshot conditionalSnapshot) {
 			sort.Strings(keys)
 			name := metric.Name
 			if strings.HasPrefix(name, "otelcol_netflow.exporter.") {
-				metrics[strings.TrimPrefix(name, "otelcol_netflow.exporter.")+"|"+strings.Join(keys, "|")] += point.Value
+				metrics[strings.TrimPrefix(name, "otelcol_netflow.exporter.")+"|"+strings.Join(keys, "|")] += value
 			}
 		}
 	}
@@ -359,6 +414,7 @@ func conditionalAssertSDKContract(t *testing.T, snapshot conditionalSnapshot) {
 		}
 	}
 	requireConditionalMetric(t, values, "otelcol_netflow.exporter.dns|exporter=netflow/dns-success|outcome=succeeded", 1)
+	requireConditionalMetric(t, values, "otelcol_netflow.exporter.rejected_records|exporter=netflow/dns-success|rejection_reason=unsupported_body", 1)
 	requireConditionalMetric(t, values, "otelcol_netflow.exporter.dns|exporter=netflow/dns-failure|outcome=failed", 1)
 	requireConditionalMetric(t, values, "otelcol_netflow.exporter.failures|exporter=netflow/unavailable|reason=unavailable", 1)
 	requireConditionalMetric(t, values, "otelcol_netflow.exporter.failures|exporter=netflow/runtime-busy|reason=busy", 1)
@@ -398,6 +454,9 @@ func conditionalAssertSDKContract(t *testing.T, snapshot conditionalSnapshot) {
 	}
 	if !helperSeen["otelcol_exporter_in_flight_requests"] || !helperSeen["otelcol_exporter_sent_log_records"] {
 		t.Fatal("actual Collector helper signals incomplete")
+	}
+	if !lifetimeSeen["netflow/dns-success"]["uptime_remaining"] || !lifetimeSeen["netflow/dns-success"]["uptime_exhausted"] {
+		t.Fatalf("production callback did not publish both dns-success lifetime gauges: %v", lifetimeSeen)
 	}
 }
 
@@ -457,17 +516,22 @@ func TestTelemetryConditionalProbe(t *testing.T) {
 	addrB := netip.MustParseAddr("192.0.2.11")
 
 	// DNS success is the package-local Runtime/ResolverWithLookup boundary.
-	e, _ := conditionalExporter(t, provider, "netflow_v5", "dns-success", "collector.example", testtransport.NewResolver(testtransport.ResolverStep{Answers: []netip.Addr{addrA}}), []conditionalDialPlan{{steps: []testtransport.WriteStep{{N: packetLength("netflow_v5")}}}})
+	e, _ := conditionalExporter(t, provider, "netflow_v5", "dns-success", "collector.example", testtransport.NewResolver(testtransport.ResolverStep{Answers: []netip.Addr{addrA}}), []conditionalDialPlan{{steps: []testtransport.WriteStep{{N: packetLength("netflow_v5")}, {N: packetLength("netflow_v5")}}}})
 	if err := e.Start(context.Background(), componenttest.NewNopHost()); err != nil {
 		t.Fatal(err)
 	}
 	if err := e.ConsumeLogs(context.Background(), conditionalLogs()); err != nil {
 		t.Fatal(err)
 	}
-	if err := e.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
+	mixed := conditionalLogs()
+	base := mixed.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
+	invalid := mixed.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().AppendEmpty()
+	base.CopyTo(invalid)
+	invalid.Body().SetStr("conditional unsupported body")
+	mixed.MarkReadOnly()
+	if err := e.ConsumeLogs(context.Background(), mixed); err != nil {
+		t.Fatalf("genuine rejection probe=%v", err)
 	}
-
 	// DNS failure is a scripted lookup/answer failure before numeric dialing.
 	e, _ = conditionalExporter(t, provider, "netflow_v5", "dns-failure", "collector.example", testtransport.NewResolver(testtransport.ResolverStep{Err: errors.New("scripted lookup failure")}), nil)
 	if err := e.Start(context.Background(), componenttest.NewNopHost()); err == nil {

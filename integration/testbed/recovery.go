@@ -3,8 +3,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -322,7 +325,11 @@ func parsePrometheusMetrics(text string) ([]prometheusMetric, error) {
 			return nil, fmt.Errorf("Prometheus line %d: %w", lineNo+1, err)
 		}
 		metricFamily := strings.TrimSuffix(name, "_total")
-		exporterMetric := strings.HasPrefix(metricFamily, "otelcol_netflow_exporter_")
+		// The remaining-uptime gauge is fractional seconds, not an accounting
+		// counter. Validate its numeric value without truncating it into the
+		// integer handoff ledger; retain exact parsing for every counter.
+		uptimeGauge := metricFamily == "otelcol_netflow_exporter_uptime_remaining"
+		exporterMetric := strings.HasPrefix(metricFamily, "otelcol_netflow_exporter_") && !uptimeGauge
 		stored := int64(0)
 		if exporterMetric {
 			exact, parseErr := strconv.ParseInt(valueText, 10, 64)
@@ -332,7 +339,7 @@ func parsePrometheusMetrics(text string) ([]prometheusMetric, error) {
 			stored = exact
 		} else {
 			value, parseErr := strconv.ParseFloat(valueText, 64)
-			if parseErr != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			if parseErr != nil || math.IsNaN(value) || math.IsInf(value, 0) || uptimeGauge && value < 0 {
 				return nil, fmt.Errorf("Prometheus line %d has invalid numeric value %q", lineNo+1, valueText)
 			}
 		}
@@ -470,9 +477,7 @@ func writeRecoveryMeasurements(path string, sends []recoveryMeasurement, decoded
 		if send.failed {
 			status = "failure"
 		}
-		if send.phase == "outage" {
-			receiptStatus = "unobserved_socket_closed"
-		} else if record, ok := decoded[send.identity]; ok {
+		if record, ok := decoded[send.identity]; ok {
 			receiptStatus = "received"
 			if send.failed {
 				receiptStatus = "received_after_error"
@@ -485,6 +490,8 @@ func writeRecoveryMeasurements(path string, sends []recoveryMeasurement, decoded
 				return fmt.Errorf("identity %d receipt precedes send start", send.identity)
 			}
 			latency = strconv.FormatInt(delta.Nanoseconds(), 10)
+		} else if send.phase == "outage" {
+			receiptStatus = "unobserved_socket_closed"
 		}
 		if err := w.Write([]string{strconv.Itoa(send.identity), send.phase, strconv.Itoa(send.epoch), strconv.FormatInt(send.start.UnixNano(), 10), strconv.FormatInt(send.end.UnixNano(), 10), status, send.errorText, receiptStatus, frame, receiptNanos, latency}); err != nil {
 			return err
@@ -500,6 +507,7 @@ func writeRecoveryMeasurements(path string, sends []recoveryMeasurement, decoded
 type recoveryReceiptSummary struct {
 	received, receivedFailed, missingSuccess, missingFailed int
 	outageSuccess, outageFailed                             int
+	outageUnobservedSuccess, outageUnobservedFailed         int
 	reordered                                               bool
 	offeredWindow, receiptWindow                            time.Duration
 	callStats, latencyStats                                 durationSummary
@@ -582,6 +590,13 @@ func summarizeRecoveryReceipts(sends []recoveryMeasurement, decoded map[int]deco
 				summary.outageFailed++
 			} else {
 				summary.outageSuccess++
+			}
+			if _, observed := decoded[send.identity]; !observed {
+				if send.failed {
+					summary.outageUnobservedFailed++
+				} else {
+					summary.outageUnobservedSuccess++
+				}
 			}
 			continue
 		}
@@ -886,6 +901,16 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 		return err
 	}
 	defer func() {
+		status := "pass"
+		if err != nil {
+			status = "nonpassing"
+		}
+		text := fmt.Sprintf("status=%s\nerror=%s\n", status, boundedErrorText(err))
+		if writeErr := os.WriteFile(filepath.Join(root, "qualification.txt"), []byte(text), 0o600); err == nil {
+			err = writeErr
+		}
+	}()
+	defer func() {
 		if e := checkArtifactCap(root); err == nil {
 			err = e
 		}
@@ -965,9 +990,6 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 	if err = sendRecoveryPhase(ctx, sender, provider, recoveryWarmRecords, 1, "warm", &sends); err != nil {
 		return err
 	}
-	if err = waitCapturePackets(ctx, warm, 1); err != nil {
-		return err
-	}
 	// ConsumeLogs is synchronous at the Collector input boundary; let the
 	// independent reader drain the kernel receive queue before this epoch is
 	// closed and retained.
@@ -976,15 +998,11 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 	if err != nil {
 		return err
 	}
-	if len(warmPackets) == 0 {
-		return errors.New("warm receiver epoch captured no packets")
-	}
 	if err = sendRecoveryPhase(ctx, sender, provider, recoveryOutageRecords, 0, "outage", &sends); err != nil {
 		return err
 	}
-	// Rebind the exact endpoint only after the outage offers. Packets offered
-	// while this socket is absent are intentionally outside independent receipt
-	// accounting and are reported as a simulated consumer outage.
+	// Rebind the exact endpoint only after the outage offers. The ledger retains
+	// any late outage receipt; absence alone is labeled socket-closed.
 	resumed, err := newCaptureOnPort(outPort)
 	if err != nil {
 		return fmt.Errorf("rebind receiver endpoint: %w", err)
@@ -998,27 +1016,17 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 	if err = sendRecoveryPhase(ctx, sender, provider, recoveryResumeRecords, 2, "resumed", &sends); err != nil {
 		return err
 	}
-	if err = waitCapturePackets(ctx, resumed, 1); err != nil {
-		return err
-	}
 	time.Sleep(250 * time.Millisecond)
 	resumedPackets, err := resumed.closeCapture()
+	captureEnd := time.Now()
 	if err != nil {
 		return err
 	}
-	if len(resumedPackets) == 0 {
-		return errors.New("resumed receiver epoch captured no packets")
-	}
 	warmPeer, peerErr := capturePeer(warm)
-	if peerErr != nil {
-		return fmt.Errorf("warm exporter peer: %w", peerErr)
-	}
-	resumedPeer, peerErr := capturePeer(resumed)
-	if peerErr != nil {
-		return fmt.Errorf("resumed exporter peer: %w", peerErr)
-	}
-	if !warmPeer.IP.Equal(resumedPeer.IP) || warmPeer.Port != resumedPeer.Port {
-		return fmt.Errorf("exporter UDP peer changed across receiver rebind: warm=%s resumed=%s", warmPeer, resumedPeer)
+	resumedPeer, resumedPeerErr := capturePeer(resumed)
+	peerErr = errors.Join(peerErr, resumedPeerErr)
+	if peerErr == nil && (!warmPeer.IP.Equal(resumedPeer.IP) || warmPeer.Port != resumedPeer.Port) {
+		peerErr = fmt.Errorf("exporter UDP peer changed across receiver rebind: warm=%s resumed=%s", warmPeer, resumedPeer)
 	}
 	if provider.count.Load() != recoveryRecords {
 		return fmt.Errorf("recovery offered %d records, want %d", provider.count.Load(), recoveryRecords)
@@ -1026,22 +1034,7 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 	if err = <-cpuDone; err != nil {
 		return fmt.Errorf("CPU profile: %w", err)
 	}
-	telemetry, telemetryText, err := readRecoveryMetrics(ctx, metricsPort)
-	if telemetryText != "" {
-		if writeErr := os.WriteFile(filepath.Join(root, "collector.metrics"), []byte(telemetryText), 0o600); err == nil && writeErr != nil {
-			return writeErr
-		}
-	}
-	if err != nil {
-		return fmt.Errorf("exporter telemetry: %w", err)
-	}
-	if telemetry.endpointEpochs != 1 {
-		return fmt.Errorf("endpoint epoch telemetry=%d before synthetic decode", telemetry.endpointEpochs)
-	}
-	_, err = validateRecoveryTelemetry(telemetry, sends)
-	if err != nil {
-		return fmt.Errorf("exporter telemetry reconciliation: %w", err)
-	}
+	telemetry, telemetryText, telemetryReadErr := readRecoveryMetrics(ctx, metricsPort)
 	if err = os.WriteFile(filepath.Join(root, "collector.metrics"), []byte(telemetryText), 0o600); err != nil {
 		return err
 	}
@@ -1063,60 +1056,14 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 		return err
 	}
 
-	if !resumedPackets[0].t.After(warmPackets[len(warmPackets)-1].t) {
-		return errors.New("combined recovery packet timestamps are not monotonic across the rebind")
+	evidence, qualificationErr := qualifyRecoveryOriginal(ctx, root, p, sends, telemetry, warmPackets, resumedPackets, captureEnd, errors.Join(telemetryReadErr, peerErr))
+	if qualificationErr != nil {
+		return qualificationErr
 	}
 	allPackets := append(append([]packet(nil), warmPackets...), resumedPackets...)
-	if err = writePCAP(filepath.Join(root, "combined.pcap"), allPackets, 40000, p.port); err != nil {
-		return err
-	}
-	combinedDecoded, err := decodeExpected(ctx, filepath.Join(root, "combined.pcap"), p.port, p.version, len(allPackets))
+	decodedByIdentity, freshResumed, preFrames, receiptSummary := evidence.records, evidence.fresh, evidence.preFrames, evidence.receipts
+	mutants, err := qualifyRecoveryMutants(ctx, root, p, sends, telemetry, warmPackets, resumedPackets, evidence)
 	if err != nil {
-		return fmt.Errorf("warm-cache combined independent decode: %w", err)
-	}
-	if err = os.WriteFile(filepath.Join(root, "tshark.combined.fields"), []byte(combinedDecoded.text+"\n"), 0o600); err != nil {
-		return err
-	}
-	decodedByIdentity, resumedOracleByFrame, err := verifyCombinedRecovery(combinedDecoded, len(warmPackets))
-	if err != nil {
-		return fmt.Errorf("combined identity accounting: %w", err)
-	}
-	if err = writePCAP(filepath.Join(root, "warm.pcap"), warmPackets, 40000, p.port); err != nil {
-		return err
-	}
-	if err = writePCAP(filepath.Join(root, "resumed.pcap"), resumedPackets, 40000, p.port); err != nil {
-		return err
-	}
-	var freshResumed decodeResult
-	var preFrames []int
-	if p.version == 5 {
-		freshResumed, err = decodeExpected(ctx, filepath.Join(root, "resumed.pcap"), p.port, p.version, len(resumedPackets))
-		if err != nil {
-			return fmt.Errorf("v5 fresh resumed decode: %w", err)
-		}
-		if err = verifyIdentitySubset(freshResumed.identities, recoveryWarmRecords+recoveryOutageRecords+1, recoveryRecords); err != nil {
-			return fmt.Errorf("v5 fresh resumed identity accounting: %w", err)
-		}
-	} else {
-		freshResumed, preFrames, err = decodeResumedFresh(ctx, filepath.Join(root, "resumed.pcap"), p, len(resumedPackets))
-		if err != nil {
-			return fmt.Errorf("fresh resumed cache transition: %w", err)
-		}
-		if err = os.WriteFile(filepath.Join(root, "tshark.pre-refresh.fields"), []byte(freshResumed.text+"\n"), 0o600); err != nil {
-			return err
-		}
-	}
-	if err = os.WriteFile(filepath.Join(root, "tshark.resumed.fields"), []byte(freshResumed.text+"\n"), 0o600); err != nil {
-		return err
-	}
-	if err = compareFreshResumedToOracle(freshResumed, preFrames, resumedOracleByFrame, p.version); err != nil {
-		return fmt.Errorf("fresh resumed/cache-retained comparison: %w", err)
-	}
-	receiptSummary, err := summarizeRecoveryReceipts(sends, decodedByIdentity, allPackets)
-	if err != nil {
-		return fmt.Errorf("receipt timing/accounting: %w", err)
-	}
-	if err = writeRecoveryMeasurements(filepath.Join(root, "measurements.csv"), sends, decodedByIdentity); err != nil {
 		return err
 	}
 	if _, err = parseProfileForBuild(ctx, filepath.Join(root, "cpu.pb.gz"), collectorID); err != nil {
@@ -1152,7 +1099,7 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 	}
 	var result strings.Builder
 	fmt.Fprintf(&result, "protocol=%s\nscenario=recovery\nrecords_per_case=%d\nwarm_records=%d\noutage_records=%d\nresumed_records=%d\ntemplate_refresh_count=%d\noffered_records=%d\n", p.name, recoveryRecords, recoveryWarmRecords, recoveryOutageRecords, recoveryResumeRecords, recoveryTemplateRefreshCount, provider.count.Load())
-	fmt.Fprintf(&result, "receiver_epoch_sequence=warm,closed_outage,resumed\nconsumer_outage_boundary=udp_socket_closed_before_outage_sends\noutage_identity_range=4..6\noutage_receipt_status=unobserved_socket_closed\nindependent_udp_receipt=true\n")
+	fmt.Fprintf(&result, "receiver_epoch_sequence=warm,closed_outage,resumed\nconsumer_outage_boundary=udp_socket_closed_before_outage_sends\noutage_identity_range=4..6\noutage_receipt_status=per_offer_observation_first\nindependent_udp_receipt=true\n")
 	fmt.Fprintf(&result, "warm_received_datagrams=%d\nresumed_received_datagrams=%d\nwarm_decoded_records=%d\nresumed_decoded_records=%d\ncombined_received_datagrams=%d\ncombined_decoded_records=%d\n", len(warmPackets), len(resumedPackets), warmDecodedRecords, resumedDecodedRecords, len(allPackets), len(decodedByIdentity))
 	fmt.Fprintf(&result, "collector_udp_peer_warm=%s\ncollector_udp_peer_resumed=%s\nendpoint_epochs=%d\n", warmPeer, resumedPeer, telemetry.endpointEpochs)
 	postRefresh := "decoded_after_template300"
@@ -1166,6 +1113,8 @@ func runRecoveryCaseContext(parent context.Context, root, collector string, p pr
 		fmt.Fprintln(&result, "fresh_cache_transition=pre_template_set300_undecoded_then_template300_then_decoded_records")
 		fmt.Fprintln(&result, "pre_refresh_fields_artifact=tshark.pre-refresh.fields")
 	}
+	fmt.Fprintf(&result, "header_qualification=pass\nheader_ledger_artifact=header-ledger.json\nheader_views=warm,combined,resumed\nheader_origin=independent_tshark\nheader_negative_controls=%d\nheader_negative_controls_artifact=mutants.csv\n", mutants)
+	fmt.Fprintf(&result, "receipt_outage_unobserved_success=%d\nreceipt_outage_unobserved_failed=%d\n", receiptSummary.outageUnobservedSuccess, receiptSummary.outageUnobservedFailed)
 	fmt.Fprintln(&result, "exporter_handoff_metrics=collector_internal_prometheus_pull")
 	fmt.Fprintf(&result, "otlp_attempts=%d\notlp_successes=%d\notlp_failures=%d\notlp_call_rate_per_second=%.6f\n", len(sends), countSuccesses(sends), len(sends)-countSuccesses(sends), ratePerSecond(len(sends), receiptSummary.offeredWindow))
 	fmt.Fprintf(&result, "receipt_retained_records=%d\nreceipt_received_after_otlp_error=%d\nreceipt_missing_scope=warm_and_resumed_active_receiver_only\nreceipt_missing_success=%d\nreceipt_missing_failed=%d\nreceipt_active_receiver_missing_success=%d\nreceipt_active_receiver_missing_failed=%d\nreceipt_outage_success=%d\nreceipt_outage_failed=%d\nreceipt_reordered=%t\nreceipt_rate_per_second=%.6f\n", receiptSummary.received, receiptSummary.receivedFailed, receiptSummary.missingSuccess, receiptSummary.missingFailed, receiptSummary.missingSuccess, receiptSummary.missingFailed, receiptSummary.outageSuccess, receiptSummary.outageFailed, receiptSummary.reordered, ratePerSecond(receiptSummary.received, receiptSummary.receiptWindow))
@@ -1318,4 +1267,718 @@ func preRefreshResult(p protocol) string {
 		return "not_applicable_v5"
 	}
 	return "structured_set300_undecoded_before_template300"
+}
+
+// Headers are observations from TShark, including data frames for which a
+// fresh cache cannot decode a record. Raw payload reads are used only to make
+// negative controls; none supplies an expected or observed oracle value.
+const recoveryDecoderCap = 64 << 10
+const recoveryFrameCap = 64
+
+type recoveryHeader struct {
+	Frame                                              int
+	Sequence, EngineType, EngineID, SourceID, DomainID uint32
+	TemplateID                                         int // zero is a one-record data packet
+}
+
+type recoveryHeaderView struct {
+	headers []recoveryHeader
+	fields  string // the existing decoder's seven record/cache fields
+}
+
+// Do not embed bytes.Buffer: its promoted ReadFrom lets io.Copy (used by
+// os/exec) bypass Write and therefore bypass an output limit.
+type recoveryDecoderOutput struct {
+	buffer bytes.Buffer
+}
+
+func (b *recoveryDecoderOutput) Write(p []byte) (int, error) {
+	remaining := recoveryDecoderCap - b.buffer.Len()
+	if len(p) > remaining {
+		n, _ := b.buffer.Write(p[:remaining])
+		return n, io.ErrShortWrite
+	}
+	return b.buffer.Write(p)
+}
+
+func (b *recoveryDecoderOutput) String() string { return b.buffer.String() }
+func (b *recoveryDecoderOutput) Len() int       { return b.buffer.Len() }
+
+func recoveryScalar(s string, bits int) (uint32, error) {
+	if s == "" {
+		return 0, errors.New("missing scalar")
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("malformed or repeated scalar %q", s)
+		}
+	}
+	n, err := strconv.ParseUint(s, 10, bits)
+	return uint32(n), err
+}
+
+// Columns: frame, version, sequence, engine type, engine ID, source ID,
+// observation domain ID, flowset ID, template ID. All occurrences are retained
+// by TShark so missing, repeated and overflowing values fail closed.
+func parseRecoveryHeaders(text string, p protocol, frames int) ([]recoveryHeader, error) {
+	var headers []recoveryHeader
+	if frames < 0 || frames > recoveryFrameCap || len(text) > recoveryDecoderCap {
+		return headers, errors.New("header input exceeds bounded frame/byte range")
+	}
+	if frames == 0 && text == "" {
+		return headers, nil
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+		f := strings.Split(line, "|")
+		if len(f) != 9 {
+			return headers, errors.New("header row does not have nine fields")
+		}
+		frame, err := recoveryScalar(f[0], 32)
+		if err != nil || int(frame) != len(headers)+1 || f[1] != strconv.Itoa(p.version) {
+			return headers, fmt.Errorf("header frame/version invalid at row %d", len(headers)+1)
+		}
+		h := recoveryHeader{Frame: int(frame)}
+		if h.Sequence, err = recoveryScalar(f[2], 32); err != nil {
+			return headers, fmt.Errorf("header sequence frame %d: %w", frame, err)
+		}
+		for i, dst := range []*uint32{&h.EngineType, &h.EngineID, &h.SourceID, &h.DomainID} {
+			applicable := p.version == 5 && i < 2 || p.version == 9 && i == 2 || p.version == 10 && i == 3
+			if !applicable {
+				if f[3+i] != "" {
+					return headers, fmt.Errorf("header inapplicable identity at frame %d", frame)
+				}
+				continue
+			}
+			bits := 32
+			if p.version == 5 {
+				bits = 8
+			}
+			if *dst, err = recoveryScalar(f[3+i], bits); err != nil {
+				return headers, fmt.Errorf("header identity frame %d column %d: %w", frame, i, err)
+			}
+		}
+		templateSet := "0"
+		if p.version == 10 {
+			templateSet = "2"
+		}
+		switch {
+		case p.version == 5:
+			if f[7] != "" || f[8] != "" {
+				return headers, errors.New("v5 header has template fields")
+			}
+		case f[7] == templateSet && (f[8] == "300" || f[8] == "301"):
+			h.TemplateID, _ = strconv.Atoi(f[8])
+		case f[7] == "300" && f[8] == "":
+		default:
+			return headers, fmt.Errorf("header template/data partition invalid at frame %d", frame)
+		}
+		headers = append(headers, h)
+	}
+	if len(headers) != frames {
+		return headers, fmt.Errorf("header frames=%d want=%d", len(headers), frames)
+	}
+	return headers, nil
+}
+
+// A separate bounded command leaves shared decoders and their five-second
+// limits untouched. Stdout and stderr cannot contaminate each other's parser.
+func decodeRecoveryHeaders(ctx context.Context, root, name string, p protocol, frames int) (recoveryHeaderView, error) {
+	var view recoveryHeaderView
+	path := filepath.Join(root, name+".pcap")
+	info, err := os.Stat(path)
+	if err != nil {
+		return view, err
+	}
+	if info.Size() > recoveryDecoderCap || frames < 0 || frames > recoveryFrameCap {
+		return view, errors.New("recovery decoder input cap exceeded")
+	}
+	decodeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	args := []string{"-r", path, "-d", fmt.Sprintf("udp.port==%d,cflow", p.port), "-T", "fields", "-E", "separator=|", "-E", "occurrence=a"}
+	for _, field := range []string{"frame.number", "cflow.version", "cflow.flowset_id", "cflow.template_id", "cflow.srcaddr", "cflow.srcport", "frame.time_epoch", "cflow.sequence", "cflow.engine_type", "cflow.engine_id", "cflow.source_id", "cflow.od_id"} {
+		args = append(args, "-e", field)
+	}
+	out, stderr := &recoveryDecoderOutput{}, &recoveryDecoderOutput{}
+	cmd := exec.CommandContext(decodeCtx, tsharkExecutable(), args...)
+	cmd.Stdout, cmd.Stderr = out, stderr
+	commandErr := cmd.Run()
+	for suffix, text := range map[string]string{".headers.fields": out.String(), ".headers.stderr": stderr.String()} {
+		if err := os.WriteFile(filepath.Join(root, name+suffix), []byte(text), 0o600); err != nil {
+			return view, err
+		}
+	}
+	if commandErr != nil {
+		return view, fmt.Errorf("recovery TShark command: %w", errors.Join(commandErr, decodeCtx.Err()))
+	}
+	if frames == 0 && out.Len() == 0 {
+		return view, nil
+	}
+	var records, headers []string
+	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+		f := strings.Split(line, "|")
+		if len(f) != 12 {
+			return view, errors.New("recovery TShark output does not have twelve fields")
+		}
+		records = append(records, strings.Join(f[:7], "|"))
+		headers = append(headers, strings.Join(append(append([]string{f[0], f[1]}, f[7:]...), f[2:4]...), "|"))
+	}
+	view.fields = strings.Join(records, "\n")
+	view.headers, err = parseRecoveryHeaders(strings.Join(headers, "\n"), p, frames)
+	return view, err
+}
+
+type recoveryOfferRow struct {
+	Identity, ReceiverEpoch int
+	Phase, Outcome, Receipt string
+	Start, End              time.Time
+	Committed               bool
+	PriorCommits            int
+	ExpectedSequence        *uint32
+	Frame                   int
+}
+
+type recoveryPacketRow struct {
+	Frame, ViewFrame, ReceiverEpoch int
+	View, Kind, FreshCache          string
+	RecordID                        int
+	Header, OtherViewHeader         *recoveryHeader
+	ExpectedSequence                *uint32
+	SequenceCharge                  int
+	Association                     string
+}
+
+type recoveryHeaderLedger struct {
+	CaptureEnd      time.Time
+	Status          string
+	Problems        []string
+	CommitInference bool
+	Offers          []recoveryOfferRow
+	Packets         []recoveryPacketRow
+}
+
+func (l *recoveryHeaderLedger) problem(format string, args ...any) {
+	l.Problems = append(l.Problems, fmt.Sprintf(format, args...))
+}
+
+func (l *recoveryHeaderLedger) result() error {
+	l.Status = "pass"
+	if len(l.Problems) == 0 {
+		return nil
+	}
+	l.Status = "nonpassing"
+	return errors.New(strings.Join(l.Problems, "; "))
+}
+
+// Build every offer and received-frame row before checking fixture guards.
+// Missing receipts never determine commits. Only reconciled synchronous call
+// outcomes do, and ambiguous templates prevent exact template qualification.
+func buildRecoveryHeaderLedger(p protocol, sends []recoveryMeasurement, telemetry recoveryTelemetry, combined decodeResult, warm, headers, fresh []recoveryHeader, preFrames []int, warmFrames, totalFrames int, captureEnd time.Time) (recoveryHeaderLedger, error) {
+	l := recoveryHeaderLedger{CaptureEnd: captureEnd}
+	byIdentity, byFrame := map[int]decodedRecord{}, map[int]decodedRecord{}
+	for _, r := range combined.identities {
+		if _, ok := byIdentity[r.identity]; ok {
+			l.problem("duplicate record identity %d", r.identity)
+		}
+		if _, ok := byFrame[r.frame]; ok {
+			l.problem("multiple records at frame %d", r.frame)
+		}
+		if r.identity < 1 || r.identity > recoveryRecords || r.frame < 1 || r.frame > totalFrames {
+			l.problem("unknown record/frame %d/%d", r.identity, r.frame)
+		}
+		byIdentity[r.identity], byFrame[r.frame] = r, r
+	}
+	pre := map[int]bool{}
+	for _, frame := range preFrames {
+		pre[frame] = true
+	}
+	for _, s := range sends {
+		o := recoveryOfferRow{Identity: s.identity, Phase: s.phase, ReceiverEpoch: s.epoch, Start: s.start, End: s.end, Outcome: "success", Receipt: "missing_success"}
+		if s.failed {
+			o.Outcome, o.Receipt = "failure", "missing_failed"
+		}
+		if r, ok := byIdentity[s.identity]; ok {
+			o.Frame, o.Receipt = r.frame, "received"
+			if s.failed {
+				o.Receipt = "received_after_error"
+			}
+		} else if s.phase == "outage" {
+			o.Receipt = "unobserved_socket_closed"
+		}
+		l.Offers = append(l.Offers, o)
+	}
+	for frame := 1; frame <= totalFrames; frame++ {
+		r := recoveryPacketRow{Frame: frame, ViewFrame: frame, ReceiverEpoch: 1, View: "warm", Kind: "unknown", FreshCache: "warm_cache"}
+		other := warm
+		if frame > warmFrames {
+			r.ViewFrame, r.ReceiverEpoch, r.View, r.FreshCache = frame-warmFrames, 2, "resumed", "decoded"
+			other = fresh
+			if pre[r.ViewFrame] {
+				r.FreshCache = "received_undecodable_pre_template"
+			}
+		}
+		if frame <= len(headers) {
+			h := headers[frame-1]
+			r.Header = &h
+			r.Kind = "data"
+			if h.TemplateID != 0 {
+				r.Kind, r.FreshCache = "template", "template"
+			}
+		}
+		if r.ViewFrame <= len(other) {
+			h := other[r.ViewFrame-1]
+			r.OtherViewHeader = &h
+		}
+		if record, ok := byFrame[frame]; ok {
+			r.RecordID = record.identity
+		}
+		l.Packets = append(l.Packets, r)
+	}
+	// Validate all existing telemetry equations before assigning charges.
+	_, telemetryErr := validateRecoveryTelemetry(telemetry, sends)
+	if telemetryErr != nil {
+		l.problem("telemetry precondition: %v", telemetryErr)
+	}
+	if telemetry.endpointEpochs != 1 {
+		l.problem("endpoint epoch count=%d want=1", telemetry.endpointEpochs)
+	}
+	offersValid := len(sends) == recoveryRecords
+	for i, s := range sends {
+		phase, epoch := "resumed", 2
+		if i < recoveryWarmRecords {
+			phase, epoch = "warm", 1
+		} else if i < recoveryWarmRecords+recoveryOutageRecords {
+			phase, epoch = "outage", 0
+		}
+		if s.identity != i+1 || s.phase != phase || s.epoch != epoch || !s.end.After(s.start) || i > 0 && s.start.Before(sends[i-1].end) {
+			offersValid = false
+		}
+	}
+	receivedFailed := 0
+	for _, o := range l.Offers {
+		if o.Receipt == "received_after_error" {
+			receivedFailed++
+		}
+	}
+	if int64(receivedFailed) > telemetry.dataMessages["ambiguous"] {
+		l.problem("received failed records=%d exceed ambiguous data messages=%d", receivedFailed, telemetry.dataMessages["ambiguous"])
+	}
+	if captureEnd.IsZero() || len(sends) > 0 && captureEnd.Before(sends[len(sends)-1].end) {
+		l.problem("invalid capture end bound")
+	}
+	if !offersValid {
+		l.problem("offer schedule must be forty unique serial warm/outage/resumed calls")
+	}
+	l.CommitInference = offersValid && telemetryErr == nil && telemetry.endpointEpochs == 1
+	exactTemplates := telemetry.templates["bootstrap/ambiguous"] == 0 && telemetry.templates["refresh/ambiguous"] == 0
+	if !exactTemplates {
+		l.problem("inconclusive template handoff: ambiguous bootstrap/refresh writes")
+	}
+	commits := 0
+	// Template expectations come from the configuration and successful-call
+	// thresholds, never header values. The timestamp window associates a whole
+	// catalog round with its triggering offer, including a final 40th success.
+	type round struct {
+		offer, count int
+		kind         string
+		base         uint32
+		ids          []int
+	}
+	rounds := []round{}
+	if p.version != 5 {
+		rounds = append(rounds, round{offer: 0, kind: "bootstrap", ids: []int{300, 301, 300, 301}})
+	}
+	if l.CommitInference {
+		for i, s := range sends {
+			o := &l.Offers[i]
+			o.PriorCommits, o.Committed = commits, !s.failed
+			seq := uint32(commits)
+			if p.version == 9 {
+				seq += uint32(4 + 2*(commits/recoveryTemplateRefreshCount))
+			}
+			if p.version != 9 || exactTemplates {
+				o.ExpectedSequence = &seq
+			}
+			if !s.failed {
+				commits++
+				if p.version != 5 && commits%recoveryTemplateRefreshCount == 0 {
+					n := commits / recoveryTemplateRefreshCount
+					base := uint32(commits)
+					if p.version == 9 {
+						base += uint32(4 + 2*(n-1))
+					}
+					rounds = append(rounds, round{offer: i, kind: "refresh", base: base, ids: []int{300, 301}})
+				}
+			}
+		}
+		if p.version == 5 {
+			if telemetry.templates["bootstrap/confirmed"] != 0 || telemetry.templates["refresh/confirmed"] != 0 || !exactTemplates {
+				l.problem("v5 false template charge")
+			}
+		} else if exactTemplates && (telemetry.templates["bootstrap/confirmed"] != 4 || telemetry.templates["refresh/confirmed"] != int64(2*(commits/recoveryTemplateRefreshCount))) {
+			l.problem("inconclusive template counts: bootstrap=%d refresh=%d expected=4/%d", telemetry.templates["bootstrap/confirmed"], telemetry.templates["refresh/confirmed"], 2*(commits/recoveryTemplateRefreshCount))
+		}
+	}
+	if len(headers) != totalFrames || len(warm) != warmFrames || len(fresh) != totalFrames-warmFrames {
+		l.problem("missing header view rows")
+	}
+	for i := range l.Packets {
+		r := &l.Packets[i]
+		if r.Header == nil || r.OtherViewHeader == nil {
+			continue
+		}
+		h, other := *r.Header, *r.OtherViewHeader
+		other.Frame += r.Frame - r.ViewFrame
+		if h.Frame != r.Frame || h != other {
+			l.problem("header view mismatch frame %d", r.Frame)
+		}
+		switch {
+		case p.version == 5 && h.EngineType != 0:
+			l.problem("header engine_type frame %d=%d want=0", r.Frame, h.EngineType)
+		case p.version == 5 && h.EngineID != 0:
+			l.problem("header engine_id frame %d=%d want=0", r.Frame, h.EngineID)
+		case p.version == 9 && h.SourceID != 42:
+			l.problem("header source_id frame %d=%d want=42", r.Frame, h.SourceID)
+		case p.version == 10 && h.DomainID != 42:
+			l.problem("header observation_domain frame %d=%d want=42", r.Frame, h.DomainID)
+		}
+		if h.TemplateID == 0 {
+			if r.RecordID < 1 || r.RecordID > len(l.Offers) {
+				l.problem("header data frame %d lacks retained record", r.Frame)
+				continue
+			}
+			o := l.Offers[r.RecordID-1]
+			r.ExpectedSequence = o.ExpectedSequence
+			r.Association = fmt.Sprintf("offer:%d", o.Identity)
+			if l.CommitInference && o.Committed {
+				r.SequenceCharge = 1
+			}
+		} else {
+			if r.RecordID != 0 {
+				l.problem("header template frame %d carries a record", r.Frame)
+			}
+			if l.CommitInference && exactTemplates {
+				recordTime, err := recoveryFrameTime(combined.text, r.Frame)
+				if err != nil {
+					l.problem("inconclusive template association: %v", err)
+					continue
+				}
+				matched := false
+				for j := range rounds {
+					round := &rounds[j]
+					if round.kind == "bootstrap" {
+						// Startup hands off templates before the first OTLP call.
+						if r.ReceiverEpoch != 1 || r.Frame >= combined.firstData {
+							continue
+						}
+					} else {
+						end := captureEnd
+						if round.offer+1 < len(sends) {
+							end = sends[round.offer+1].end
+						}
+						// The maintenance worker or the next Pack may drain this
+						// round. Receipt need not precede the next call's start.
+						if recordTime.Before(sends[round.offer].start) || !recordTime.Before(end) {
+							continue
+						}
+					}
+					matched = true
+					if round.count >= len(round.ids) || h.TemplateID != round.ids[round.count] || round.kind == "bootstrap" && r.ReceiverEpoch != 1 {
+						l.problem("inconclusive template catalog association frame %d", r.Frame)
+						break
+					}
+					seq := round.base
+					if p.version == 9 {
+						seq += uint32(round.count)
+						r.SequenceCharge = 1
+					}
+					r.ExpectedSequence, r.Association = &seq, fmt.Sprintf("%s:offer:%d:copy_index:%d", round.kind, round.offer+1, round.count)
+					if round.kind == "bootstrap" {
+						r.Association = fmt.Sprintf("bootstrap:startup:copy_index:%d", round.count)
+					}
+					round.count++
+					break
+				}
+				if !matched {
+					l.problem("inconclusive template association frame %d outside triggering offer windows", r.Frame)
+				}
+			}
+		}
+		if r.ExpectedSequence != nil && h.Sequence != *r.ExpectedSequence {
+			l.problem("header sequence frame %d=%d want=%d (%s)", r.Frame, h.Sequence, *r.ExpectedSequence, r.Association)
+		}
+	}
+	if l.CommitInference && exactTemplates {
+		for _, round := range rounds {
+			if round.count != len(round.ids) {
+				l.problem("inconclusive partial/cutoff %s round at offer %d: received=%d want=%d", round.kind, round.offer+1, round.count, len(round.ids))
+			}
+		}
+	}
+	// These original guards remain strict. The fully populated ledger survives
+	// their failure, including a received outage record or missing warm seed.
+	if _, _, err := verifyCombinedRecovery(combined, warmFrames); err != nil {
+		l.problem("inconclusive retained-cache prerequisite: %v", err)
+	}
+	return l, l.result()
+}
+
+func recoveryFrameTime(text string, frame int) (time.Time, error) {
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if frame < 1 || frame > len(lines) {
+		return time.Time{}, errors.New("missing template frame timestamp")
+	}
+	f := strings.Split(lines[frame-1], "|")
+	if len(f) != 7 || f[0] != strconv.Itoa(frame) {
+		return time.Time{}, errors.New("invalid template frame timestamp row")
+	}
+	return parseEpoch(f[6])
+}
+
+func writeRecoveryHeaderLedger(root string, l recoveryHeaderLedger) error {
+	data, err := json.MarshalIndent(l, "", "  ")
+	if err != nil {
+		return err
+	}
+	if len(data)+1 > recoveryDecoderCap {
+		return errors.New("recovery ledger output cap exceeded")
+	}
+	return os.WriteFile(filepath.Join(root, "header-ledger.json"), append(data, '\n'), 0o600)
+}
+
+type recoveryEvidence struct {
+	captureEnd                        time.Time
+	combined, fresh                   decodeResult
+	preFrames                         []int
+	warmView, combinedView, freshView recoveryHeaderView
+	ledger                            recoveryHeaderLedger
+	records                           map[int]decodedRecord
+	receipts                          recoveryReceiptSummary
+}
+
+func qualifyRecoveryOriginal(ctx context.Context, root string, p protocol, sends []recoveryMeasurement, telemetry recoveryTelemetry, warmPackets, resumedPackets []packet, captureEnd time.Time, telemetryReadErr error) (recoveryEvidence, error) {
+	e := recoveryEvidence{records: map[int]decodedRecord{}, captureEnd: captureEnd}
+	all := append(append([]packet(nil), warmPackets...), resumedPackets...)
+	for _, capture := range []struct {
+		name    string
+		packets []packet
+	}{{"warm", warmPackets}, {"combined", all}, {"resumed", resumedPackets}} {
+		if err := writeRecoveryPCAP(filepath.Join(root, capture.name+".pcap"), capture.packets, p); err != nil {
+			return e, err
+		}
+	}
+	var combinedErr, freshErr, warmHeaderErr, combinedHeaderErr, freshHeaderErr error
+	e.combined, combinedErr = decodeExpected(ctx, filepath.Join(root, "combined.pcap"), p.port, p.version, len(all))
+	if p.version == 5 {
+		e.fresh, freshErr = decodeExpected(ctx, filepath.Join(root, "resumed.pcap"), p.port, p.version, len(resumedPackets))
+	} else {
+		e.fresh, e.preFrames, freshErr = decodeResumedFresh(ctx, filepath.Join(root, "resumed.pcap"), p, len(resumedPackets))
+		if err := os.WriteFile(filepath.Join(root, "tshark.pre-refresh.fields"), []byte(e.fresh.text+"\n"), 0o600); err != nil {
+			return e, err
+		}
+	}
+	for name, text := range map[string]string{"tshark.combined.fields": e.combined.text, "tshark.resumed.fields": e.fresh.text} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text+"\n"), 0o600); err != nil {
+			return e, err
+		}
+	}
+	e.warmView, warmHeaderErr = decodeRecoveryHeaders(ctx, root, "warm", p, len(warmPackets))
+	e.combinedView, combinedHeaderErr = decodeRecoveryHeaders(ctx, root, "combined", p, len(all))
+	e.freshView, freshHeaderErr = decodeRecoveryHeaders(ctx, root, "resumed", p, len(resumedPackets))
+	e.ledger, _ = buildRecoveryHeaderLedger(p, sends, telemetry, e.combined, e.warmView.headers, e.combinedView.headers, e.freshView.headers, e.preFrames, len(warmPackets), len(all), captureEnd)
+	for _, err := range []error{telemetryReadErr, combinedErr, freshErr, warmHeaderErr, combinedHeaderErr, freshHeaderErr} {
+		if err != nil {
+			e.ledger.problem("independent receipt/telemetry prerequisite: %v", err)
+		}
+	}
+	if e.combinedView.fields != e.combined.text || e.freshView.fields != e.fresh.text {
+		e.ledger.problem("header/record decoder field join differs")
+	}
+	lines := strings.Split(e.combined.text, "\n")
+	if len(lines) < len(warmPackets) || e.warmView.fields != strings.Join(lines[:min(len(lines), len(warmPackets))], "\n") {
+		e.ledger.problem("warm/retained decoder field join differs")
+	}
+	oracle := map[int]decodedRecord{}
+	for _, record := range e.combined.identities {
+		e.records[record.identity] = record
+		if record.frame > len(warmPackets) {
+			oracle[record.frame-len(warmPackets)] = record
+		}
+	}
+	if err := compareFreshResumedToOracle(e.fresh, e.preFrames, oracle, p.version); err != nil {
+		e.ledger.problem("fresh cache partition: %v", err)
+	}
+	if len(warmPackets) == 0 || len(resumedPackets) == 0 || !resumedPackets[0].t.After(warmPackets[len(warmPackets)-1].t) {
+		e.ledger.problem("combined capture timing is not monotonic across rebind")
+	}
+	var timingErr error
+	e.receipts, timingErr = summarizeRecoveryReceipts(sends, e.records, all)
+	if timingErr != nil {
+		e.ledger.problem("receipt timing: %v", timingErr)
+	}
+	if err := os.WriteFile(filepath.Join(root, "receipt-summary.txt"), []byte(fmt.Sprintf("%+v\n", e.receipts)), 0o600); err != nil {
+		return e, err
+	}
+	if err := writeRecoveryMeasurements(filepath.Join(root, "measurements.csv"), sends, e.records); err != nil {
+		e.ledger.problem("measurement persistence: %v", err)
+	}
+	qualificationErr := e.ledger.result()
+	if err := writeRecoveryHeaderLedger(root, e.ledger); err != nil {
+		return e, err
+	}
+	return e, qualificationErr
+}
+
+func writeRecoveryPCAP(path string, packets []packet, p protocol) error {
+	size := 24
+	for _, packet := range packets {
+		size += 16 + 42 + len(packet.b)
+	}
+	if len(packets) > recoveryFrameCap || size > recoveryDecoderCap {
+		return errors.New("recovery PCAP exceeds 64-frame/64-KiB cap")
+	}
+	return writePCAP(path, packets, 40000, p.port)
+}
+
+// Mutants contain the original timestamped packets, changing only selected
+// header bytes. Rebuilding the synthetic envelope updates its checksums. Every
+// variant must independently reproduce the original seven record/cache fields
+// in both halves and the combined view before a named header rejection counts.
+func qualifyRecoveryMutants(ctx context.Context, root string, p protocol, sends []recoveryMeasurement, telemetry recoveryTelemetry, warmPackets, resumedPackets []packet, original recoveryEvidence) (int, error) {
+	type mutation struct {
+		name, rejection string
+		change          func([]packet)
+	}
+	all := append(append([]packet(nil), warmPackets...), resumedPackets...)
+	sequenceOffset := 16
+	if p.version == 9 {
+		sequenceOffset = 12
+	} else if p.version == 10 {
+		sequenceOffset = 8
+	}
+	setSequence := func(packets []packet, frame int, seq uint32) {
+		binary.BigEndian.PutUint32(packets[frame-1].b[sequenceOffset:sequenceOffset+4], seq)
+	}
+	firstResumedData := 0
+	for _, row := range original.ledger.Packets {
+		if row.View == "resumed" && row.Kind == "data" {
+			firstResumedData = row.Frame
+			break
+		}
+	}
+	if firstResumedData == 0 {
+		return 0, errors.New("mutants require a resumed data frame")
+	}
+	mutations := []mutation{{"resumed-false-reset", "header sequence", func(packets []packet) { setSequence(packets, firstResumedData, 0) }}}
+	if p.version == 5 {
+		for _, identity := range []struct {
+			name   string
+			offset int
+		}{{"engine_type", 20}, {"engine_id", 21}} {
+			mutations = append(mutations, mutation{"wrong-" + identity.name, "header " + identity.name, func(packets []packet) {
+				for _, packet := range packets {
+					packet.b[identity.offset] = 1
+				}
+			}})
+		}
+	} else {
+		identity, offset := "source_id", 16
+		if p.version == 10 {
+			identity, offset = "observation_domain", 12
+		}
+		mutations = append(mutations, mutation{"wrong-" + identity, "header " + identity, func(packets []packet) {
+			for _, packet := range packets {
+				binary.BigEndian.PutUint32(packet.b[offset:offset+4], 43)
+			}
+		}})
+		mutations = append(mutations, mutation{"wrong-refresh-charge", "header sequence", func(packets []packet) {
+			for _, row := range original.ledger.Packets {
+				if row.Kind != "data" || row.RecordID < 1 {
+					continue
+				}
+				offer := original.ledger.Offers[row.RecordID-1]
+				rounds := offer.PriorCommits / recoveryTemplateRefreshCount
+				if rounds == 0 {
+					continue
+				}
+				seq := *row.ExpectedSequence
+				if p.version == 9 {
+					seq -= uint32(2 * rounds)
+				} else {
+					seq += uint32(2 * rounds)
+				}
+				setSequence(packets, row.Frame, seq)
+			}
+		}})
+		if len(original.preFrames) == 0 {
+			return 0, errors.New("mutants require a pre-template frame")
+		}
+		frame := len(warmPackets) + original.preFrames[0]
+		mutations = append(mutations, mutation{"pre-template-sequence", "header sequence", func(packets []packet) {
+			setSequence(packets, frame, *original.ledger.Packets[frame-1].ExpectedSequence+1)
+		}})
+	}
+	// Fixed campaign: 3 + 4 + 4 = 11, below the global sixteen-mutant ceiling.
+	if len(mutations) > 4 {
+		return 0, errors.New("recovery per-protocol mutant budget exceeded")
+	}
+	f, err := os.OpenFile(filepath.Join(root, "mutants.csv"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	w := csv.NewWriter(f)
+	defer w.Flush()
+	if err := w.Write([]string{"mutant", "record_cache_partition", "required_rejection", "observed_rejection"}); err != nil {
+		return 0, err
+	}
+	for index, mutation := range mutations {
+		packets := make([]packet, len(all))
+		for i, packet := range all {
+			packets[i] = packet
+			packets[i].b = append([]byte(nil), packet.b...)
+		}
+		mutation.change(packets)
+		dir := filepath.Join(root, "mutant-"+mutation.name)
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return index, err
+		}
+		views := make([]recoveryHeaderView, 3)
+		for i, capture := range []struct {
+			name    string
+			packets []packet
+			fields  string
+		}{{"warm", packets[:len(warmPackets)], original.warmView.fields}, {"combined", packets, original.combinedView.fields}, {"resumed", packets[len(warmPackets):], original.freshView.fields}} {
+			if err := writeRecoveryPCAP(filepath.Join(dir, capture.name+".pcap"), capture.packets, p); err != nil {
+				return index, err
+			}
+			views[i], err = decodeRecoveryHeaders(ctx, dir, capture.name, p, len(capture.packets))
+			if err != nil {
+				return index, fmt.Errorf("mutant %s %s tool/parse failure: %w", mutation.name, capture.name, err)
+			}
+			if views[i].fields != capture.fields {
+				return index, fmt.Errorf("mutant %s %s record/cache partition changed", mutation.name, capture.name)
+			}
+		}
+		ledger, rejection := buildRecoveryHeaderLedger(p, sends, telemetry, original.combined, views[0].headers, views[1].headers, views[2].headers, original.preFrames, len(warmPackets), len(all), original.captureEnd)
+		if err := writeRecoveryHeaderLedger(dir, ledger); err != nil {
+			return index, err
+		}
+		if rejection == nil || !strings.Contains(rejection.Error(), mutation.rejection) {
+			return index, fmt.Errorf("mutant %s lacks named rejection %q: %v", mutation.name, mutation.rejection, rejection)
+		}
+		// No incidental non-header failure can satisfy a sensitivity control.
+		for _, problem := range ledger.Problems {
+			if !strings.HasPrefix(problem, mutation.rejection) {
+				return index, fmt.Errorf("mutant %s incidental rejection: %s", mutation.name, problem)
+			}
+		}
+		if err := w.Write([]string{mutation.name, "unchanged_independent_decode", mutation.rejection, rejection.Error()}); err != nil {
+			return index, err
+		}
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return index, err
+		}
+	}
+	return len(mutations), f.Sync()
 }

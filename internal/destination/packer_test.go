@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/mapping"
+	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/normalize"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/testpdata"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/wire"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/wire/ipfix"
@@ -16,6 +19,13 @@ import (
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/wire/netflow9"
 	"go.opentelemetry.io/collector/pdata/plog"
 )
+
+func boundedPackerContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
 
 func packerState(t *testing.T) *State {
 	return packerV5State(t, 1, 464)
@@ -126,6 +136,53 @@ func validPackerLogs(t *testing.T) plog.Logs {
 	return logs
 }
 
+func assertPackerRejectionCounts(t *testing.T, result *PackResult, want RejectionCounts) {
+	t.Helper()
+	if got := result.RejectionCounts(); got != want {
+		t.Fatalf("rejection reasons = %v, want %v", got, want)
+	}
+	if got := rejectionReasonTotal(result.RejectionCounts()); got != result.Counts().Invalid {
+		t.Fatalf("reason total = %d, invalid = %d", got, result.Counts().Invalid)
+	}
+}
+
+func TestPackerAdmissionAndInternalFailuresHaveNoRejectionReasons(t *testing.T) {
+	packer, err := NewPacker(packerState(t), PackerConfig{
+		Write: func(context.Context, []byte) (int, error) {
+			t.Fatal("failed admission reached transport")
+			return 0, nil
+		},
+		Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		packer *Packer
+		ctx    context.Context
+		logs   plog.Logs
+		want   error
+	}{
+		{"nil-packer", nil, boundedPackerContext(t), validPackerLogs(t), ErrPackInternal},
+		{"nil-context", packer, nil, validPackerLogs(t), ErrPackInternal},
+		// Zero pdata is a private malformed-input probe, not a source record.
+		{"malformed-pdata", packer, boundedPackerContext(t), plog.Logs{}, ErrPackAdmission},
+		{"empty-request", packer, boundedPackerContext(t), plog.NewLogs(), ErrPackPermanent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := test.packer.Pack(test.ctx, test.logs, nil)
+			if !errors.Is(err, test.want) {
+				t.Fatalf("Pack() error = %v, want %v", err, test.want)
+			}
+			if result.Counts() != (SourceLedgerCounts{}) {
+				t.Fatalf("admission failure covered source records: %+v", result.Counts())
+			}
+			assertPackerRejectionCounts(t, result, RejectionCounts{})
+		})
+	}
+}
+
 func TestPackerStreamsAndConfirmsSource(t *testing.T) {
 	state := packerState(t)
 	logs := validPackerLogs(t)
@@ -155,6 +212,7 @@ func TestPackerStreamsAndConfirmsSource(t *testing.T) {
 	if got := result.Counts(); got.Covered != 1 || got.Valid != 1 || got.Confirmed != 1 || got.Unsent != 0 {
 		t.Fatalf("counts = %+v", got)
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
 	if writes != 1 || state.Sequence() != 1 {
 		t.Fatalf("writes/sequence = %d/%d, want 1/1", writes, state.Sequence())
 	}
@@ -218,6 +276,9 @@ func TestPackerContinuesInvalidSources(t *testing.T) {
 	if got := result.Counts(); got.Valid != 1 || got.Invalid != 1 || got.Confirmed != 1 {
 		t.Fatalf("counts = %+v", got)
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 	if writes != 1 {
 		t.Fatalf("writes = %d, want 1", writes)
 	}
@@ -253,6 +314,9 @@ func TestPackerAmbiguousWriteStopsAndValidatesSuffix(t *testing.T) {
 	if writes != 1 || state.Sequence() != 0 {
 		t.Fatalf("writes/sequence = %d/%d, want 1/0", writes, state.Sequence())
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerRejectsUnbootstrappedAndEmpty(t *testing.T) {
@@ -279,6 +343,7 @@ func TestPackerRejectsUnbootstrappedAndEmpty(t *testing.T) {
 	if result.Counts().Covered != 0 {
 		t.Fatalf("empty ledger covered = %d, want zero", result.Counts().Covered)
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
 }
 
 func TestPackerStreamsV9AndIPFIX(t *testing.T) {
@@ -319,6 +384,7 @@ func TestPackerStreamsV9AndIPFIX(t *testing.T) {
 			if writes != 1 {
 				t.Fatalf("data writes = %d, want 1", writes)
 			}
+			assertPackerRejectionCounts(t, result, RejectionCounts{})
 		})
 	}
 }
@@ -342,9 +408,11 @@ func TestPackerDrainsDueRefreshBeforeData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packer.Pack(context.Background(), testpdata.CanonicalLogs(), nil); err != nil {
+	first, err := packer.Pack(context.Background(), testpdata.CanonicalLogs(), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertPackerRejectionCounts(t, first, RejectionCounts{})
 	if writes != 1 || !state.Progress().RefreshDue {
 		t.Fatalf("first pack writes/progress = %d/%+v", writes, state.Progress())
 	}
@@ -355,6 +423,7 @@ func TestPackerDrainsDueRefreshBeforeData(t *testing.T) {
 	if writes != 3 || clocks != 3 || state.Sequence() != 5 || state.Progress().RefreshActive {
 		t.Fatalf("refresh writes/clocks/progress = %d/%d/%+v", writes, clocks, state.Progress())
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
 }
 
 func TestPackerRefreshFailureLeavesValidatedSuffix(t *testing.T) {
@@ -382,9 +451,11 @@ func TestPackerRefreshFailureLeavesValidatedSuffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packer.Pack(context.Background(), testpdata.CanonicalLogs(), nil); err != nil {
+	first, err := packer.Pack(context.Background(), testpdata.CanonicalLogs(), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertPackerRejectionCounts(t, first, RejectionCounts{})
 	sequence := state.Sequence()
 	fail = true
 	logs := testpdata.CanonicalLogs()
@@ -402,6 +473,9 @@ func TestPackerRefreshFailureLeavesValidatedSuffix(t *testing.T) {
 	if writes != 2 || state.Sequence() != sequence || !state.Progress().RefreshDue {
 		t.Fatalf("refresh failure writes/sequence/progress = %d/%d/%+v", writes, state.Sequence(), state.Progress())
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerLookupIsRequestLocalAndResultsOwnLedgers(t *testing.T) {
@@ -466,6 +540,8 @@ func TestPackerLookupIsRequestLocalAndResultsOwnLedgers(t *testing.T) {
 	if got := result2.Counts(); got.Covered != 1 || got.Confirmed != 1 {
 		t.Fatalf("second result counts = %+v", got)
 	}
+	assertPackerRejectionCounts(t, result1, RejectionCounts{})
+	assertPackerRejectionCounts(t, result2, RejectionCounts{})
 }
 
 func TestPackerSwitchesFamilyShapesWithRealV9Packets(t *testing.T) {
@@ -491,6 +567,7 @@ func TestPackerSwitchesFamilyShapesWithRealV9Packets(t *testing.T) {
 	if len(packets) != 2 || binary.BigEndian.Uint16(packets[0]) != 9 || binary.BigEndian.Uint16(packets[1]) != 9 {
 		t.Fatalf("packets = %d or versions = %x/%x", len(packets), packets[0][:2], packets[1][:2])
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
 	shape0, _ := state.Catalog().ShapeAt(0)
 	shape1, _ := state.Catalog().ShapeAt(1)
 	if got := binary.BigEndian.Uint16(packets[0][20:22]); got != shape0.ID() {
@@ -499,6 +576,52 @@ func TestPackerSwitchesFamilyShapesWithRealV9Packets(t *testing.T) {
 	if got := binary.BigEndian.Uint16(packets[1][20:22]); got != shape1.ID() {
 		t.Fatalf("IPv6 data set ID = %d, want %d", got, shape1.ID())
 	}
+}
+
+// TestPackerNoMatchingFamilyShapeReason injects an inconsistent destination
+// catalog after bootstrap so shapeIndex reaches its no-family-match branch.
+// Valid public mappings reject this mismatch earlier in the mapper.
+func TestPackerNoMatchingFamilyShapeReason(t *testing.T) {
+	state := shapeSwitchState(t, 1000)
+	ipv6, ok := state.Catalog().wire.ShapeAt(1)
+	if !ok {
+		t.Fatal("IPv6 shape missing")
+	}
+	onlyIPv6, err := wire.NewCatalog(wire.CatalogSpec{
+		Protocol: wire.ProtocolV9,
+		IDBase:   uint32(ipv6.ID()),
+		Shapes: []wire.ShapeSpec{{
+			Protocol: wire.ProtocolV9, Family: ipv6.Family(), ID: uint32(ipv6.ID()),
+			Fields: ipv6.Fields(), RecordLength: ipv6.RecordLength(), TemplateBytes: ipv6.TemplateBytes(),
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destinationCatalog, err := NewCatalogFromWire(onlyIPv6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.mu.Lock()
+	state.catalog = destinationCatalog
+	state.mu.Unlock()
+	packer, err := NewPacker(state, PackerConfig{
+		Write: func(context.Context, []byte) (int, error) {
+			t.Fatal("shape mismatch reached transport")
+			return 0, nil
+		},
+		Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := packer.Pack(boundedPackerContext(t), validPackerLogs(t), nil)
+	if !errors.Is(err, ErrPackPermanent) || result.Classification(0) != SourceInvalid {
+		t.Fatalf("shape mismatch = (%d,%v,%v)", result.Outcome(), err, result.Classification(0))
+	}
+	want := RejectionCounts{}
+	want[RejectionFamilyMismatch] = 1
+	assertPackerRejectionCounts(t, result, want)
 }
 
 func TestPackerFlushesV5SamplingChanges(t *testing.T) {
@@ -523,6 +646,269 @@ func TestPackerFlushesV5SamplingChanges(t *testing.T) {
 	if binary.BigEndian.Uint16(packets[0][22:24]) != 1000 || binary.BigEndian.Uint16(packets[1][22:24]) != 2000 {
 		t.Fatalf("sampling headers = %d/%d", binary.BigEndian.Uint16(packets[0][22:24]), binary.BigEndian.Uint16(packets[1][22:24]))
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
+}
+
+func TestPackerV5SamplingRejectionReason(t *testing.T) {
+	state := packerV5State(t, 30, 464)
+	logs := validPackerLogs(t)
+	logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().PutInt("flow.sampling_rate", 16384)
+	writes := 0
+	packer, err := NewPacker(state, PackerConfig{
+		Write: func(_ context.Context, datagram []byte) (int, error) { writes++; return len(datagram), nil },
+		Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := packer.Pack(boundedPackerContext(t), logs, nil)
+	if !errors.Is(err, ErrPackPermanent) || result.Classification(0) != SourceInvalid || writes != 0 {
+		t.Fatalf("sampling rejection = (%d,%v,%d), writes=%d", result.Outcome(), err, result.Classification(0), writes)
+	}
+	want := RejectionCounts{}
+	want[RejectionInvalidValue] = 1
+	assertPackerRejectionCounts(t, result, want)
+}
+
+func TestPackerMappingLossesRetainedWhenMappedRecordIsRejected(t *testing.T) {
+	state := packerV5State(t, 30, 464)
+	logs := validPackerLogs(t)
+	normalized := wire.NormalizedRecord{}
+	if err := normalize.NormalizeEachIndexed(logs, func(_ uint64, record wire.NormalizedRecord, recordErr error) error {
+		if recordErr != nil {
+			return recordErr
+		}
+		normalized = record
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := state.Mapping().MapWithStats(normalized, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().PutInt("flow.sampling_rate", 16384)
+	packer, err := NewPacker(state, PackerConfig{
+		Write: func(context.Context, []byte) (int, error) {
+			t.Fatal("sampling rejection reached transport")
+			return 0, nil
+		},
+		Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := packer.Pack(boundedPackerContext(t), logs, nil)
+	if !errors.Is(err, ErrPackPermanent) {
+		t.Fatalf("Pack() error = %v, want permanent", err)
+	}
+	if result.ExporterLosses() != uint64(expected.ExporterLosses) || result.CanonicalSourceLoss() != uint64(expected.CanonicalSourceLoss) {
+		t.Fatalf("loss counters = %d/%d, want %d/%d", result.ExporterLosses(), result.CanonicalSourceLoss(), expected.ExporterLosses, expected.CanonicalSourceLoss)
+	}
+	want := RejectionCounts{}
+	want[RejectionInvalidValue] = 1
+	assertPackerRejectionCounts(t, result, want)
+}
+
+type rejectingDataWriter struct{ appendErr error }
+
+func (w rejectingDataWriter) Write(dst []byte, request wire.PacketRequest) (int, error) {
+	return (netflow5.Writer{}).Write(dst, request)
+}
+
+func (w rejectingDataWriter) NewDataPacket() wire.DataPacketAppender {
+	return &rejectingDataAppender{inner: (netflow5.Writer{}).NewDataPacket(), appendErr: w.appendErr, reject: true}
+}
+
+type suffixRejectWriter struct {
+	created   *int
+	appendErr error
+	base      wire.ContractWriter
+	stream    wire.StreamingWriter
+}
+
+func (w suffixRejectWriter) Write(dst []byte, request wire.PacketRequest) (int, error) {
+	return w.base.Write(dst, request)
+}
+
+func (w suffixRejectWriter) NewDataPacket() wire.DataPacketAppender {
+	(*w.created)++
+	return &rejectingDataAppender{
+		inner: w.stream.NewDataPacket(), appendErr: w.appendErr, reject: *w.created > 1,
+	}
+}
+
+type rejectingDataAppender struct {
+	inner     wire.DataPacketAppender
+	appendErr error
+	reject    bool
+	rejected  bool
+}
+
+func (a *rejectingDataAppender) Begin(dst []byte, request wire.DataPacketRequest) error {
+	return a.inner.Begin(dst, request)
+}
+
+func (a *rejectingDataAppender) Append(record wire.WireRecord) error {
+	if a.reject && !a.rejected {
+		a.rejected = true
+		return a.appendErr
+	}
+	return a.inner.Append(record)
+}
+
+func (a *rejectingDataAppender) Finish() (int, error) { return a.inner.Finish() }
+func (a *rejectingDataAppender) Reset()               { a.inner.Reset(); a.rejected = false }
+
+// TestPackerTerminalAppendRejectionReasons injects trusted wire sentinels at
+// the private writer seam; it does not claim public reachability of each cause.
+func TestPackerTerminalAppendRejectionReasons(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want RejectionReason
+	}{
+		{"value", wire.ErrInvalidValue, RejectionRecordInvalid},
+		{"family", wire.ErrInvalidFamily, RejectionFamilyMismatch},
+		{"bounds", wire.ErrBounds, RejectionRecordTooLarge},
+		{"short-buffer", wire.ErrShortBuffer, RejectionRecordTooLarge},
+		{"value-limit", wire.ErrRecordValueLimit, RejectionRecordTooLarge},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			compiled := compiledMapping(t, wire.ProtocolV5)
+			config := DefaultConfig(wire.ProtocolV5)
+			config.HasUptimeOrigin = true
+			config.UptimeOriginUnixNanos = 0
+			state, err := NewState(compiled, rejectingDataWriter{appendErr: test.err}, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packer, err := NewPacker(state, PackerConfig{
+				Write: func(context.Context, []byte) (int, error) {
+					t.Fatal("terminal append rejection reached transport")
+					return 0, nil
+				},
+				Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := packer.Pack(boundedPackerContext(t), validPackerLogs(t), nil)
+			if !errors.Is(err, ErrPackPermanent) || result.Classification(0) != SourceInvalid {
+				t.Fatalf("terminal append = (%d,%v,%v)", result.Outcome(), err, result.Classification(0))
+			}
+			want := RejectionCounts{}
+			want[test.want] = 1
+			assertPackerRejectionCounts(t, result, want)
+		})
+	}
+}
+
+// TestPackerPureAppenderSuffixAvailabilityReason injects a pure appender
+// value rejection after the availability gate; this branch cannot be reached
+// through a validated writer/value pair because normal appenders accept the
+// mapped record.
+func TestPackerPureAppenderSuffixAvailabilityReason(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want RejectionReason
+	}{
+		{name: "value", err: wire.ErrInvalidValue, want: RejectionRecordInvalid},
+		{name: "capacity", err: wire.ErrBounds, want: RejectionRecordTooLarge},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			created := 0
+			writer := suffixRejectWriter{
+				created: &created, appendErr: test.err,
+				base: netflow5.Writer{}, stream: netflow5.Writer{},
+			}
+			compiled := compiledMapping(t, wire.ProtocolV5)
+			config := DefaultConfig(wire.ProtocolV5)
+			config.HasUptimeOrigin = true
+			config.UptimeOriginUnixNanos = 0
+			state, err := NewState(compiled, writer, config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			availableChecks := 0
+			packer, err := NewPacker(state, PackerConfig{
+				Available: func() bool {
+					availableChecks++
+					return availableChecks <= 2
+				},
+				Write: func(context.Context, []byte) (int, error) {
+					t.Fatal("unavailable suffix reached transport")
+					return 0, nil
+				},
+				Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := packer.Pack(boundedPackerContext(t), appendPackerCopies(t, validPackerLogs(t), 2), nil)
+			if !errors.Is(err, ErrPackTransient) || result.Classification(0) != SourceUnsentValid || result.Classification(1) != SourceInvalid {
+				t.Fatalf("availability suffix = (%d,%v,%v/%v)", result.Outcome(), err, result.Classification(0), result.Classification(1))
+			}
+			want := RejectionCounts{}
+			want[test.want] = 1
+			assertPackerRejectionCounts(t, result, want)
+		})
+	}
+}
+
+// TestPackerPureAppenderSuffixCancellationReason injects a validation
+// appender rejection after a request context is canceled. The cancellation
+// gate is public behavior; the rejecting validation appender is private-only.
+func TestPackerPureAppenderSuffixCancellationReason(t *testing.T) {
+	pen, element := uint32(32473), uint32(100)
+	variable := true
+	maxLength := uint32(16)
+	compiled, err := mapping.Compile(mapping.Config{
+		Protocol:        wire.ProtocolIPFIX,
+		Fields:          []mapping.FieldSelection{{Canonical: "source.port"}},
+		LossPolicy:      mapping.LossPolicyEncodeAndCount,
+		MaxDatagramSize: 65507, PathMTU: 65535, Endpoint: "192.0.2.1:4739",
+		Custom: []mapping.CustomField{{Source: "vendor.value", PEN: &pen, ElementID: &element, Encoding: "string", Variable: &variable, MaxLength: &maxLength}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := 0
+	writer := suffixRejectWriter{
+		created: &created, appendErr: wire.ErrInvalidValue,
+		base: ipfix.Writer{}, stream: ipfix.Writer{},
+	}
+	config := DefaultConfig(wire.ProtocolIPFIX)
+	config.ObservationDomainID = 42
+	state, err := NewState(compiled, writer, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap(t, state, 4_000_000_000, 2)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	packer, err := NewPacker(state, PackerConfig{
+		Write: func(_ context.Context, datagram []byte) (int, error) { return len(datagram), nil },
+		Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs := appendPackerCopies(t, testpdata.CanonicalLogs(), 2)
+	result, err := packer.Pack(ctx, logs, func(ordinal uint64, _ string) (wire.Value, bool) {
+		if ordinal == 1 {
+			cancel()
+		}
+		return wire.StringValue("x"), true
+	})
+	if !errors.Is(err, ErrPackTransient) || result.Classification(0) != SourceUnsentValid || result.Classification(1) != SourceInvalid {
+		t.Fatalf("cancellation suffix = (%d,%v,%v/%v)", result.Outcome(), err, result.Classification(0), result.Classification(1))
+	}
+	want := RejectionCounts{}
+	want[RejectionRecordInvalid] = 1
+	assertPackerRejectionCounts(t, result, want)
 }
 
 func TestPackerFlushBoundaries(t *testing.T) {
@@ -556,6 +942,7 @@ func TestPackerFlushBoundaries(t *testing.T) {
 			if writes != test.wantWrites || result.Counts().Confirmed != uint64(test.count) {
 				t.Fatalf("writes/confirmed = %d/%d, want %d/%d", writes, result.Counts().Confirmed, test.wantWrites, test.count)
 			}
+			assertPackerRejectionCounts(t, result, RejectionCounts{})
 		})
 	}
 }
@@ -601,6 +988,7 @@ func TestPackerAllLegalWritesAndInvalidWriteResults(t *testing.T) {
 			if writes != 1 || state.Sequence() != 0 && test.wantResult != PackSucceeded {
 				t.Fatalf("writes/sequence = %d/%d", writes, state.Sequence())
 			}
+			assertPackerRejectionCounts(t, result, RejectionCounts{})
 		})
 	}
 }
@@ -637,6 +1025,9 @@ func TestPackerMixedConfirmedInvalidAmbiguousAndUnsentLedger(t *testing.T) {
 	if writes != 2 || state.Sequence() != 1 {
 		t.Fatalf("writes/sequence = %d/%d, want 2/1", writes, state.Sequence())
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerAllInvalidWritesNothing(t *testing.T) {
@@ -658,6 +1049,9 @@ func TestPackerAllInvalidWritesNothing(t *testing.T) {
 	if writes != 0 || state.Sequence() != 0 {
 		t.Fatalf("all-invalid writes/sequence = %d/%d", writes, state.Sequence())
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerLargeRequestDoesNotUseAggregateAdmission(t *testing.T) {
@@ -680,6 +1074,7 @@ func TestPackerLargeRequestDoesNotUseAggregateAdmission(t *testing.T) {
 	if lookupCalls != 0 || writes == 0 || state.Sequence() == 0 {
 		t.Fatalf("large request callbacks/writes/sequence = %d/%d/%d", lookupCalls, writes, state.Sequence())
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
 }
 
 func TestPackerOversizeVariableCustomBeforeAndAfterData(t *testing.T) {
@@ -700,13 +1095,16 @@ func TestPackerOversizeVariableCustomBeforeAndAfterData(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		result, err := packer.Pack(context.Background(), appendPackerCopies(t, testpdata.CanonicalLogs(), 2), shortLookup)
+		result, err := packer.Pack(boundedPackerContext(t), appendPackerCopies(t, testpdata.CanonicalLogs(), 2), shortLookup)
 		if err != nil || result.Classification(0) != SourceInvalid || result.Classification(1) != SourceConfirmed {
 			t.Fatalf("Pack() = (%d,%v), classes=%d/%d", result.Outcome(), err, result.Classification(0), result.Classification(1))
 		}
 		if writes != 1 {
 			t.Fatalf("writes = %d, want one valid sibling packet", writes)
 		}
+		wantReasons := RejectionCounts{}
+		wantReasons[RejectionRecordTooLarge] = 1
+		assertPackerRejectionCounts(t, result, wantReasons)
 	})
 
 	t.Run("after-data-write-failure", func(t *testing.T) {
@@ -723,7 +1121,7 @@ func TestPackerOversizeVariableCustomBeforeAndAfterData(t *testing.T) {
 			t.Fatal(err)
 		}
 		logs := appendPackerCopies(t, testpdata.CanonicalLogs(), 2)
-		result, err := packer.Pack(context.Background(), logs, func(ordinal uint64, _ string) (wire.Value, bool) {
+		result, err := packer.Pack(boundedPackerContext(t), logs, func(ordinal uint64, _ string) (wire.Value, bool) {
 			if ordinal == 1 {
 				return wire.StringValue(longValue), true
 			}
@@ -735,7 +1133,145 @@ func TestPackerOversizeVariableCustomBeforeAndAfterData(t *testing.T) {
 		if writes != 1 || state.Sequence() != 0 {
 			t.Fatalf("writes/sequence = %d/%d, want 1/0", writes, state.Sequence())
 		}
+		wantReasons := RejectionCounts{}
+		wantReasons[RejectionRecordTooLarge] = 1
+		assertPackerRejectionCounts(t, result, wantReasons)
 	})
+
+	t.Run("after-successful-boundary-flush", func(t *testing.T) {
+		state := customPackerState(t, true, 128, 0)
+		writes := 0
+		packer, err := NewPacker(state, PackerConfig{
+			Write: func(_ context.Context, datagram []byte) (int, error) { writes++; return len(datagram), nil },
+			Clock: func() (uint64, uint64) { return 4_000_000_000, 2 },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		logs := appendPackerCopies(t, testpdata.CanonicalLogs(), 2)
+		result, err := packer.Pack(boundedPackerContext(t), logs, func(ordinal uint64, _ string) (wire.Value, bool) {
+			if ordinal == 1 {
+				return wire.StringValue(longValue), true
+			}
+			return wire.StringValue("x"), true
+		})
+		if err != nil || result.Classification(0) != SourceConfirmed || result.Classification(1) != SourceInvalid {
+			t.Fatalf("boundary flush = (%v,%v/%v)", err, result.Classification(0), result.Classification(1))
+		}
+		if writes != 1 || result.Counts().Confirmed != 1 || state.Sequence() != 1 {
+			t.Fatalf("boundary writes/counts/sequence = %d/%+v/%d", writes, result.Counts(), state.Sequence())
+		}
+		want := RejectionCounts{}
+		want[RejectionRecordTooLarge] = 1
+		assertPackerRejectionCounts(t, result, want)
+	})
+}
+
+// TestPackerMinimumFitReasonProvenCapacityAndGeneric uses package-local
+// constructed records to reach wire sizing branches that validated mapping
+// cannot currently produce: descriptor byte overflow, encoded-set capacity,
+// and an injected unknown protocol. The public per-datagram capacity failures
+// above use valid mapped values and exercise this helper or suffix preview.
+func TestPackerMinimumFitReasonProvenCapacityAndGeneric(t *testing.T) {
+	variableState := customPackerState(t, true, 65507, 0)
+	variableShape, ok := variableState.Catalog().ShapeAt(0)
+	if !ok {
+		t.Fatal("variable shape missing")
+	}
+	variableValues := make([]wire.Value, variableShape.FieldCount())
+	for index, descriptor := range variableShape.Fields() {
+		if descriptor.Variable {
+			variableValues[index] = wire.StringValue(strings.Repeat("x", int(descriptor.MaxLength)+1))
+		} else {
+			variableValues[index] = wire.UintValue(1)
+		}
+	}
+	variableRecord, err := wire.NewWireRecord(variableShape.Family(), variableValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variablePacker := &Packer{state: variableState, datagram: make([]byte, 65507)}
+	if fits, reason := variablePacker.minimumDataPacketFits(variableRecord, 0); fits || reason != RejectionRecordTooLarge {
+		t.Fatalf("variable descriptor fit = (%v,%v), want false/too-large", fits, reason)
+	}
+
+	largeFields := make([]wire.FieldDescriptor, 32)
+	largeValues := make([]wire.Value, len(largeFields))
+	for index := range largeFields {
+		length := uint16(2048)
+		if index == len(largeFields)-1 {
+			length = 2047
+		}
+		largeFields[index] = wire.FieldDescriptor{
+			Protocol: wire.ProtocolIPFIX,
+			Field:    wire.FieldInvalid,
+			Source:   fmt.Sprintf("vendor.capacity.%d", index),
+			Custom:   true, Enterprise: true, ID: uint16(256 + index), PEN: 32473,
+			Length: length, Encoding: wire.EncodingOctetArray,
+		}
+		largeValues[index] = wire.BytesValue(bytes.Repeat([]byte{1}, int(length)))
+	}
+	largeSpec := wire.ShapeSpec{
+		Protocol: wire.ProtocolIPFIX, Family: wire.FamilyIPv4, ID: 256,
+		Fields: largeFields, RecordLength: 65535,
+	}
+	var largeShape wire.Shape
+	for templateBytes := uint64(1); templateBytes <= wire.DefaultMaxTemplateBytes; templateBytes++ {
+		largeSpec.TemplateBytes = templateBytes
+		largeShape, err = wire.NewShape(largeSpec)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		t.Fatalf("large shape construction: %v", err)
+	}
+	wireCatalog, err := wire.NewCatalog(wire.CatalogSpec{
+		Protocol: wire.ProtocolIPFIX, IDBase: 256, Shapes: []wire.ShapeSpec{largeSpec},
+	})
+	if err != nil {
+		t.Fatalf("large catalog construction: %v", err)
+	}
+	largeCatalog, err := NewCatalogFromWire(wireCatalog)
+	if err != nil {
+		t.Fatalf("large destination catalog: %v", err)
+	}
+	largeRecord, err := wire.NewWireRecord(largeShape.Family(), largeValues)
+	if err != nil {
+		t.Fatal(err)
+	}
+	largeState := &State{catalog: largeCatalog, config: Config{Protocol: wire.ProtocolIPFIX, MaxDatagramSize: 65507}}
+	largePacker := &Packer{state: largeState, datagram: make([]byte, 65507)}
+	if fits, reason := largePacker.minimumDataPacketFits(largeRecord, 0); fits || reason != RejectionRecordTooLarge {
+		t.Fatalf("encoded set fit = (%v,%v), want false/too-large", fits, reason)
+	}
+
+	genericPacker := &Packer{state: packerState(t), datagram: make([]byte, 464)}
+	var genericRecord wire.WireRecord
+	if err := normalize.NormalizeEachIndexed(validPackerLogs(t), func(_ uint64, normalized wire.NormalizedRecord, normalizeErr error) error {
+		if normalizeErr != nil {
+			return normalizeErr
+		}
+		mapped, mapErr := genericPacker.state.Mapping().MapWithStats(normalized, nil)
+		genericRecord = mapped.Record
+		return mapErr
+	}); err != nil {
+		t.Fatalf("generic record mapping: %v", err)
+	}
+	if fits, reason := genericPacker.minimumDataPacketFits(wire.WireRecord{}, 0); fits || reason != RejectionRecordInvalid {
+		t.Fatalf("generic record fit = (%v,%v), want false/record-invalid", fits, reason)
+	}
+	if fits, reason := genericPacker.minimumDataPacketFits(wire.WireRecord{}, 99); fits || reason != RejectionRecordInvalid {
+		t.Fatalf("generic shape fit = (%v,%v), want false/record-invalid", fits, reason)
+	}
+	unknownState := packerState(t)
+	unknownState.mu.Lock()
+	unknownState.config.Protocol = wire.ProtocolUnknown
+	unknownState.mu.Unlock()
+	unknownPacker := &Packer{state: unknownState, datagram: make([]byte, 464)}
+	if fits, reason := unknownPacker.minimumDataPacketFits(genericRecord, 0); fits || reason != RejectionOther {
+		t.Fatalf("unknown protocol fit = (%v,%v), want false/other", fits, reason)
+	}
 }
 
 func TestPackerPureAppenderRejectsFutureV5Suffix(t *testing.T) {
@@ -754,10 +1290,13 @@ func TestPackerPureAppenderRejectsFutureV5Suffix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := packer.Pack(context.Background(), logs, nil)
+	result, err := packer.Pack(boundedPackerContext(t), logs, nil)
 	if !errors.Is(err, ErrPackTransient) || result.Classification(0) != SourceAmbiguous || result.Classification(1) != SourceInvalid {
 		t.Fatalf("Pack() = (%d,%v), classes=%d/%d", result.Outcome(), err, result.Classification(0), result.Classification(1))
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionRecordInvalid] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerPureAppenderRejectsFutureSuffixAfterRefreshFailure(t *testing.T) {
@@ -802,21 +1341,27 @@ func TestPackerPureAppenderRejectsFutureSuffixAfterRefreshFailure(t *testing.T) 
 	for _, key := range []string{"flow.start", "flow.end"} {
 		valid.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().PutInt(key, 3_000_000_000)
 	}
-	if _, err := packer.Pack(context.Background(), valid, nil); err != nil {
+	ctx := boundedPackerContext(t)
+	first, err := packer.Pack(ctx, valid, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertPackerRejectionCounts(t, first, RejectionCounts{})
 	logs := appendPackerCopies(t, valid, 2)
 	future := logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(1)
 	for _, key := range []string{"flow.start", "flow.end"} {
 		future.Attributes().PutInt(key, 5_000_000_000)
 	}
-	result, err := packer.Pack(context.Background(), logs, nil)
+	result, err := packer.Pack(ctx, logs, nil)
 	if !errors.Is(err, ErrPackTransient) || result.Classification(0) != SourceUnsentValid || result.Classification(1) != SourceInvalid {
 		t.Fatalf("Pack() = (%d,%v), classes=%d/%d", result.Outcome(), err, result.Classification(0), result.Classification(1))
 	}
 	if writes != 2 || !state.Progress().RefreshDue {
 		t.Fatalf("writes/progress = %d/%+v", writes, state.Progress())
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionRecordInvalid] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerPureAppenderValidatesSuffixAfterRefreshFailure(t *testing.T) {
@@ -835,13 +1380,16 @@ func TestPackerPureAppenderValidatesSuffixAfterRefreshFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := packer.Pack(context.Background(), testpdata.CanonicalLogs(), func(uint64, string) (wire.Value, bool) {
+	ctx := boundedPackerContext(t)
+	first, err := packer.Pack(ctx, testpdata.CanonicalLogs(), func(uint64, string) (wire.Value, bool) {
 		return wire.StringValue("x"), true
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertPackerRejectionCounts(t, first, RejectionCounts{})
 	logs := appendPackerCopies(t, testpdata.CanonicalLogs(), 2)
-	result, err := packer.Pack(context.Background(), logs, func(ordinal uint64, _ string) (wire.Value, bool) {
+	result, err := packer.Pack(ctx, logs, func(ordinal uint64, _ string) (wire.Value, bool) {
 		if ordinal == 1 {
 			return wire.StringValue(strings.Repeat("x", 120)), true
 		}
@@ -853,6 +1401,9 @@ func TestPackerPureAppenderValidatesSuffixAfterRefreshFailure(t *testing.T) {
 	if writes != 2 || !state.Progress().RefreshDue {
 		t.Fatalf("writes/progress = %d/%+v", writes, state.Progress())
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionRecordTooLarge] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerIPFIXNanosecondLimitIsMapperRejection(t *testing.T) {
@@ -885,10 +1436,13 @@ func TestPackerIPFIXNanosecondLimitIsMapperRejection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := packer.Pack(context.Background(), logs, nil)
+	result, err := packer.Pack(boundedPackerContext(t), logs, nil)
 	if !errors.Is(err, ErrPackPermanent) || result.Classification(0) != SourceInvalid || writes != 0 {
 		t.Fatalf("mapper rejection = (%d,%v,%d), writes=%d", result.Outcome(), err, result.Classification(0), writes)
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionTimeInvalid] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerResumesPartialMultiShapeRefresh(t *testing.T) {
@@ -928,6 +1482,9 @@ func TestPackerResumesPartialMultiShapeRefresh(t *testing.T) {
 	if writes != 6 || state.Progress().RefreshActive || state.Progress().RefreshDue {
 		t.Fatalf("resume writes/progress = %d/%+v", writes, state.Progress())
 	}
+	assertPackerRejectionCounts(t, first, RejectionCounts{})
+	assertPackerRejectionCounts(t, partial, RejectionCounts{})
+	assertPackerRejectionCounts(t, resumed, RejectionCounts{})
 }
 
 func TestPackerAllowsOnlyOneDueRefreshRoundWhenClockAdvances(t *testing.T) {
@@ -970,6 +1527,7 @@ func TestPackerAllowsOnlyOneDueRefreshRoundWhenClockAdvances(t *testing.T) {
 	if writes != 2 || state.Sequence() != initialSequence+2 || !state.Progress().RefreshDue {
 		t.Fatalf("writes/sequence/progress = %d/%d/%+v", writes, state.Sequence(), state.Progress())
 	}
+	assertPackerRejectionCounts(t, result, RejectionCounts{})
 }
 
 func TestPackerCancellationAbortsBufferedData(t *testing.T) {
@@ -1004,6 +1562,9 @@ func TestPackerCancellationAbortsBufferedData(t *testing.T) {
 	if state.pending != nil || state.Epoch() != before || result.Packets() != 0 {
 		t.Fatal("canceled buffer advanced or retained a transaction")
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 	if _, err := packer.Pack(nil, logs, nil); !errors.Is(err, ErrPackInternal) {
 		t.Fatalf("nil context = %v", err)
 	}
@@ -1041,6 +1602,9 @@ func TestPackerAvailabilityAbortsBufferedData(t *testing.T) {
 	if state.pending != nil || state.Epoch() != before || state.Progress() != progress || result.Packets() != 0 {
 		t.Fatal("unavailable buffer advanced or retained a transaction")
 	}
+	wantReasons := RejectionCounts{}
+	wantReasons[RejectionMissingField] = 1
+	assertPackerRejectionCounts(t, result, wantReasons)
 }
 
 func TestPackerCallerContextForDataAndRefresh(t *testing.T) {

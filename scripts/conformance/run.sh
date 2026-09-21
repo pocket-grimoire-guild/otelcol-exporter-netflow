@@ -42,7 +42,15 @@ for input in integration/conformance/registry/netflow-extension.yaml \
 	integration/conformance/scenarios/{custom,upstream}/conformance.yaml \
 	integration/conformance/telemetry_snapshot_test.go.in \
 	scripts/conformance/{replay.py,verify.py,test_harness.py,requirements-py3.13.txt,go-module-graph.sha256} \
-	scripts/ci/capture.py telemetry_conditional_test.go; do
+	scripts/ci/capture.py telemetry_conditional_test.go \
+	internal/destination/rejection.go internal/destination/ledger.go internal/destination/packer.go \
+	internal/destination/lifetime.go internal/destination/lifetime_test.go \
+	internal/destination/state.go internal/destination/lifecycle.go \
+	internal/destination/publication.go internal/destination/refresh.go \
+	clock.go config.go factory.go exporter.go telemetry_lifetime.go telemetry_lifetime_test.go clock_test.go \
+	metadata.yaml documentation.md telemetry.go telemetry_acceptance_test.go telemetry_rejection_test.go \
+	internal/metadata/generated_telemetry.go internal/metadata/generated_telemetry_test.go \
+	internal/metadatatest/generated_telemetrytest.go internal/metadatatest/generated_telemetrytest_test.go; do
 	if [[ ! -f "$repo/$input" || -L "$repo/$input" ]]; then
 		echo "required harness input is missing or not regular: $input" >&2
 		exit 2
@@ -68,7 +76,7 @@ if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
 	exit 2
 fi
 
-for tool in git curl tar sha256sum mktemp find wc date awk cmp xargs sort grep uname basename dirname install cp mkdir chmod cat; do
+for tool in git curl tar sha256sum mktemp find wc date awk cmp xargs sort grep uname basename dirname install cp mkdir chmod cat timeout; do
 	command -v "$tool" >/dev/null || {
 		echo "required tool is missing: $tool" >&2
 		exit 2
@@ -275,6 +283,14 @@ done
 source_hashes=$output_root/pins/source-sha256.txt
 (cd "$repo" && sha256sum \
 	go.mod go.sum telemetry_conditional_test.go \
+	internal/destination/rejection.go internal/destination/ledger.go internal/destination/packer.go \
+	internal/destination/lifetime.go internal/destination/lifetime_test.go \
+	internal/destination/state.go internal/destination/lifecycle.go \
+	internal/destination/publication.go internal/destination/refresh.go \
+	clock.go config.go factory.go exporter.go telemetry_lifetime.go telemetry_lifetime_test.go clock_test.go \
+	metadata.yaml documentation.md telemetry.go telemetry_acceptance_test.go telemetry_rejection_test.go \
+	internal/metadata/generated_telemetry.go internal/metadata/generated_telemetry_test.go \
+	internal/metadatatest/generated_telemetrytest.go internal/metadatatest/generated_telemetrytest_test.go \
 	integration/conformance/registry/netflow-extension.yaml \
 	integration/conformance/scenarios/upstream/conformance.yaml \
 	integration/conformance/scenarios/custom/conformance.yaml \
@@ -337,13 +353,22 @@ for label in upstream-strict upstream-report-only custom-strict custom-report-on
 		--log "$output_root/logs/$label.log" --mode "$label"
 done
 
-"$venv/bin/python" "$repo/scripts/ci/capture.py" \
+timeout --signal=TERM --kill-after=10s 30s \
+	"$venv/bin/python" "$repo/scripts/ci/capture.py" \
 	--output "$output_root/logs/harness-guards.log" --max-bytes "$MAX_LOG_BYTES" -- \
-	"$venv/bin/python" "$repo/scripts/conformance/test_harness.py" "$output_root"
+	"$venv/bin/python" "$repo/scripts/conformance/test_harness.py" "$output_root" -v
 
 source_hashes_after=$work/source-sha256.after.txt
 (cd "$repo" && sha256sum \
 	go.mod go.sum telemetry_conditional_test.go \
+	internal/destination/rejection.go internal/destination/ledger.go internal/destination/packer.go \
+	internal/destination/lifetime.go internal/destination/lifetime_test.go \
+	internal/destination/state.go internal/destination/lifecycle.go \
+	internal/destination/publication.go internal/destination/refresh.go \
+	clock.go config.go factory.go exporter.go telemetry_lifetime.go telemetry_lifetime_test.go clock_test.go \
+	metadata.yaml documentation.md telemetry.go telemetry_acceptance_test.go telemetry_rejection_test.go \
+	internal/metadata/generated_telemetry.go internal/metadata/generated_telemetry_test.go \
+	internal/metadatatest/generated_telemetrytest.go internal/metadatatest/generated_telemetrytest_test.go \
 	integration/conformance/registry/netflow-extension.yaml \
 	integration/conformance/scenarios/upstream/conformance.yaml \
 	integration/conformance/scenarios/custom/conformance.yaml \
@@ -370,13 +395,24 @@ cat > "$output_root/report.md" <<EOF
 
 The command exercised the existing package-local \`TestTelemetryConditionalProbe\`
 through a temporary Go overlay. The SDK snapshot retained resource attribute
-values, scope identity and all 11 declared signals. The Python bridge replayed
+values, scope identity and all 14 declared signals. The Python bridge replayed
 that snapshot over OTLP/gRPC, then applied one exact mutation for each custom
 control after capture. Custom strict mode failed both controls; custom
 report-only mode emitted WARN for both. Upstream strict failed on the pinned
 upstream registry findings; upstream report-only retained those findings as
 WARN. The four invocations remain separate in \`reports/\`, \`data/\`, and
 \`logs/\`.
+
+The rejected-record point comes from the SDK probe's actual invalid-record
+path. The bridge requires its fixed reason and does not synthesize a point.
+Both lifetime points are actual production-callback observations of an
+applicable published runtime; replay preserves Float64/Int64 gauge types and
+never manufactures points. Source hashes cover the maintained accounting,
+lifetime snapshot, clock/runtime/wrapper, telemetry, metadata and generated
+contract inputs. The guards reject missing/symlink inputs before
+setup and exercise the actual post-run hash comparator on copied inputs changed
+after capture. These hashes bind current files throughout this run; they do not
+authenticate regular replacements made before the initial hash capture.
 
 Every log is bounded to 1 MiB and the complete dynamic output tree is bounded
 to 64 MiB.
@@ -388,9 +424,10 @@ artifact hash manifest covers every final file except the manifest itself.
 
 This evidence is limited to exporter self-telemetry against the custom and
 pinned upstream registries. It does not claim upstream standardization,
-NetFlow/IPFIX wire interoperability, UDP receipt, appliance ingestion, or
-capacity.
+NetFlow/IPFIX wire interoperability, UDP receipt, appliance ingestion, operator
+export/scraping, or capacity.
 EOF
+
 
 manifest=$output_root/pins/artifact-sha256.txt
 (
@@ -423,4 +460,5 @@ if (( artifact_bytes > MAX_ARTIFACT_BYTES )); then
 	echo "dynamic artifacts exceed 64 MiB: $artifact_bytes" >&2
 	exit 1
 fi
+
 echo "conformance harness passed: $output_root"

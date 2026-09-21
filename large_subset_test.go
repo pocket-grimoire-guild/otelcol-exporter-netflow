@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/destination"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/testclock"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/testpdata"
+	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/testtransport"
 	"github.com/pocket-grimoire-guild/otelcol-exporter-netflow/internal/transport"
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/consumer/consumererror"
@@ -171,7 +173,7 @@ func TestLargeReturnedSubsetCrossesUint16Boundary(t *testing.T) {
 	assertLargeSubsetByteOwnership(t, logs, subset)
 }
 
-func TestLargeReturnedSubsetCancellationPreservesUnsentValid(t *testing.T) {
+func TestLargeReturnedSubsetAlreadyCanceledReturnsUnavailable(t *testing.T) {
 	conn := newLargeSubsetConn(-1)
 	c := validConfig("ipfix")
 	e, err := newLogsExporter(context.Background(), exportertest.NewNopSettings(NewFactory().Type()), c, testclock.New(1788220802000000000, 1), func(context.Context, netip.AddrPort) (transport.Conn, error) {
@@ -188,14 +190,103 @@ func TestLargeReturnedSubsetCancellationPreservesUnsentValid(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err = e.ConsumeLogs(ctx, testpdata.CanonicalLogs())
-	logsErr, ok := errors.AsType[consumererror.Logs](err)
-	if !ok || consumererror.IsPermanent(err) || logsErr.Data().LogRecordCount() != 1 {
-		t.Fatalf("canceled consume=%v, subset records=%d", err, logsErr.Data().LogRecordCount())
+	if _, ok := errors.AsType[consumererror.Logs](err); ok {
+		t.Fatalf("already-canceled consume=%v, want no consumererror.Logs subset", err)
+	}
+	if !errors.Is(err, destination.ErrRuntimeUnavailable) {
+		t.Fatalf("already-canceled consume=%v, want unavailable", err)
 	}
 	attempted, confirmed := conn.counts()
 	if attempted != largeSubsetCancellationBootstrap || confirmed != largeSubsetCancellationBootstrap {
-		t.Fatalf("canceled data writes attempted/confirmed=%d/%d, want %d/%d", attempted, confirmed, largeSubsetCancellationBootstrap, largeSubsetCancellationBootstrap)
+		t.Fatalf("already-canceled writes attempted/confirmed=%d/%d, want %d/%d", attempted, confirmed, largeSubsetCancellationBootstrap, largeSubsetCancellationBootstrap)
 	}
+}
+
+func TestLargeReturnedSubsetCancellationPreservesUnsentValid(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c := validConfig("ipfix")
+	c.MaxRecordsPerMessage = ptr(uint16(1))
+	steps := append(bootstrapSteps("ipfix"), testtransport.WriteStep{
+		N:   0,
+		Err: context.Canceled,
+		OnWrite: func() {
+			cancel()
+		},
+	})
+	e, conn := fakeExporter(t, c, steps...)
+	if err := e.Start(context.Background(), componenttest.NewNopHost()); err != nil {
+		t.Fatal(err)
+	}
+	logs := largeSubsetCancellationLogs()
+	logs.MarkReadOnly()
+	err := e.ConsumeLogs(ctx, logs)
+	logsErr, ok := errors.AsType[consumererror.Logs](err)
+	if !ok || consumererror.IsPermanent(err) {
+		t.Fatalf("canceled after data handoff = %v, want transient consumererror.Logs", err)
+	}
+	subset := logsErr.Data()
+	if got := subset.LogRecordCount(); got != 2 {
+		t.Fatalf("canceled subset records=%d, want 2", got)
+	}
+	cursor := logCursor{logs: subset}
+	for index, want := range []int64{0, 1} {
+		record, ok := cursor.at(uint64(index))
+		if !ok {
+			t.Fatalf("canceled subset lost record %d", index)
+		}
+		ordinal, ok := record.Attributes().Get("ordinal")
+		if !ok || ordinal.Int() != want {
+			t.Fatalf("canceled subset ordinal=%v, want %d", ordinal, want)
+		}
+	}
+	if logs.LogRecordCount() != 2 {
+		t.Fatalf("source records=%d, want 2", logs.LogRecordCount())
+	}
+	sourceRecords := logs.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords()
+	if got, ok := sourceRecords.At(0).Attributes().Get("ordinal"); !ok || got.Int() != 0 {
+		t.Fatalf("source ordinal 0 changed: %v/%t", got, ok)
+	}
+	if got, ok := sourceRecords.At(1).Attributes().Get("ordinal"); !ok || got.Int() != 1 {
+		t.Fatalf("source ordinal 1 changed: %v/%t", got, ok)
+	}
+	subsetRecords := subset.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords()
+	subsetRecords.At(0).Attributes().PutInt("ordinal", 99)
+	if got, _ := sourceRecords.At(0).Attributes().Get("ordinal"); got.Int() != 0 {
+		t.Fatal("subset mutation changed source ownership")
+	}
+
+	writes := conn.Writes()
+	if len(writes) != 5 {
+		t.Fatalf("writes=%d, want four bootstrap and one data attempt", len(writes))
+	}
+	for index, write := range writes[:4] {
+		if write.Err != nil || write.N != len(write.Payload) {
+			t.Fatalf("bootstrap write %d = n=%d len=%d err=%v, want confirmed", index, write.N, len(write.Payload), write.Err)
+		}
+	}
+	dataWrite := writes[4]
+	if dataWrite.N != 0 || !errors.Is(dataWrite.Err, context.Canceled) {
+		t.Fatalf("data attempt = n=%d err=%v, want zero/context canceled", dataWrite.N, dataWrite.Err)
+	}
+	if err := e.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if conn.closes.Load() != 1 {
+		t.Fatalf("socket closes=%d, want one", conn.closes.Load())
+	}
+}
+
+func largeSubsetCancellationLogs() plog.Logs {
+	logs := plog.NewLogs()
+	records := logs.ResourceLogs().AppendEmpty().ScopeLogs().AppendEmpty().LogRecords()
+	canonical := testpdata.CanonicalLogs().ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0)
+	for ordinal := int64(0); ordinal < 2; ordinal++ {
+		record := records.AppendEmpty()
+		canonical.CopyTo(record)
+		record.Attributes().PutInt("ordinal", ordinal)
+	}
+	return logs
 }
 
 func largeSubsetLogs(t *testing.T) plog.Logs {

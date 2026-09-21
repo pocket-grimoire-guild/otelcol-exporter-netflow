@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -291,6 +292,7 @@ func assertTransitionBootstrap(t *testing.T, protocol string, packets []dnsTrans
 	if len(packets) != want {
 		t.Fatalf("bootstrap packets=%d, want %d", len(packets), want)
 	}
+	templateCopies := make(map[uint16]int)
 	for index, packet := range packets {
 		if len(packet.payload) < 24 {
 			t.Fatalf("bootstrap packet %d too short: %d", index, len(packet.payload))
@@ -305,6 +307,17 @@ func assertTransitionBootstrap(t *testing.T, protocol string, packets []dnsTrans
 		if protocol == "ipfix" && binary.BigEndian.Uint16(packet.payload[16:]) != 2 {
 			t.Fatalf("IPFIX bootstrap packet %d set id=%d, want template set", index, binary.BigEndian.Uint16(packet.payload[16:]))
 		}
+		offset := 24 // v9 header and template-set header.
+		if protocol == "ipfix" {
+			offset = 20
+		}
+		if len(packet.payload) < offset+2 {
+			t.Fatalf("bootstrap packet %d lacks template ID", index)
+		}
+		templateCopies[binary.BigEndian.Uint16(packet.payload[offset:])]++
+	}
+	if protocol != "netflow_v5" && (len(templateCopies) != 2 || templateCopies[256] != 2 || templateCopies[257] != 2) {
+		t.Fatalf("bootstrap template copies=%v, want two each of IDs 256 and 257", templateCopies)
 	}
 }
 
@@ -336,7 +349,7 @@ func assertTransitionData(t *testing.T, protocol string, packet dnsTransitionDat
 }
 
 func writeDNSTransitionPCAP(path string, packets []dnsTransitionDatagram, port int) error {
-	if len(packets) == 0 || len(packets) > 64 {
+	if len(packets) == 0 || len(packets) > 16 {
 		return fmt.Errorf("invalid transition packet count %d", len(packets))
 	}
 	var output bytes.Buffer
@@ -366,6 +379,9 @@ func writeDNSTransitionPCAP(path string, packets []dnsTransitionDatagram, port i
 		binary.LittleEndian.PutUint32(header[12:], uint32(len(frame)))
 		output.Write(header[:])
 		output.Write(frame)
+		if output.Len() > 64<<10 {
+			return fmt.Errorf("transition capture exceeds 64 KiB")
+		}
 	}
 	return os.WriteFile(path, output.Bytes(), 0o600)
 }
@@ -419,13 +435,302 @@ func transitionArtifactDir(t *testing.T, protocol string) string {
 	if err != nil {
 		t.Fatalf("create DNS artifact directory: %v", err)
 	}
+	t.Cleanup(func() {
+		var total int64
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+			if total > 16<<20 {
+				return fmt.Errorf("transition artifacts exceed 16 MiB at %s", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("transition artifact budget: %v", err)
+		}
+	})
 	return dir
 }
 
-func runDNSTransitionTShark(t *testing.T, protocol, endpoint string, port int, packets []dnsTransitionDatagram, wantPorts [][]int) string {
+// Header expectations are literal fixture contracts, independent of packet bytes,
+// exporter state and the writer. The identity order is the applicable field order
+// below: v5 engine type/ID, v9 Source ID, or IPFIX Observation Domain ID.
+type transitionHeaderExpectation struct {
+	sequence []uint32
+	identity []uint32
+}
+
+type transitionHeaderMutation struct {
+	name, field string
+	values      []uint32 // One value applies to every frame; otherwise one per frame.
+}
+
+type transitionHeaderCase struct {
+	want    transitionHeaderExpectation
+	mutants []transitionHeaderMutation
+}
+
+type transitionScalarField struct {
+	name string
+	bits int
+}
+
+func transitionHeaderFields(protocol string) []transitionScalarField {
+	fields := []transitionScalarField{{"cflow.sequence", 32}}
+	switch protocol {
+	case "netflow_v5":
+		return append(fields, transitionScalarField{"cflow.engine_type", 8}, transitionScalarField{"cflow.engine_id", 8})
+	case "netflow_v9":
+		return append(fields, transitionScalarField{"cflow.source_id", 32})
+	case "ipfix":
+		return append(fields, transitionScalarField{"cflow.od_id", 32})
+	default:
+		panic("unknown transition protocol: " + protocol)
+	}
+}
+
+func dnsTransitionHeaderCase(protocol, endpoint string) transitionHeaderCase {
+	switch protocol + "/" + endpoint {
+	case "netflow_v5/a":
+		return transitionHeaderCase{transitionHeaderExpectation{[]uint32{0, 3}, []uint32{0, 0}}, []transitionHeaderMutation{
+			{"packet-count", "cflow.sequence", []uint32{0, 1}},
+			{"engine-type", "cflow.engine_type", []uint32{1}},
+			{"engine-id", "cflow.engine_id", []uint32{1}},
+		}}
+	case "netflow_v5/b":
+		return transitionHeaderCase{transitionHeaderExpectation{[]uint32{0}, []uint32{0, 0}}, []transitionHeaderMutation{
+			{"false-continuation", "cflow.sequence", []uint32{6}},
+		}}
+	case "netflow_v9/a":
+		return transitionHeaderCase{transitionHeaderExpectation{[]uint32{0, 1, 2, 3, 4, 5}, []uint32{0}}, []transitionHeaderMutation{
+			{"omitted-bootstrap-charge", "cflow.sequence", []uint32{0, 0, 0, 0, 0, 1}},
+			{"source-id", "cflow.source_id", []uint32{1}},
+		}}
+	case "netflow_v9/b":
+		return transitionHeaderCase{transitionHeaderExpectation{[]uint32{0, 1, 2, 3, 4}, []uint32{0}}, []transitionHeaderMutation{
+			{"false-continuation", "cflow.sequence", []uint32{6, 7, 8, 9, 10}},
+		}}
+	case "ipfix/a":
+		return transitionHeaderCase{transitionHeaderExpectation{[]uint32{0, 0, 0, 0, 0, 3}, []uint32{0}}, []transitionHeaderMutation{
+			{"packet-count", "cflow.sequence", []uint32{0, 0, 0, 0, 0, 1}},
+			{"spurious-bootstrap-charge", "cflow.sequence", []uint32{0, 1, 2, 3, 4, 7}},
+			{"domain-id", "cflow.od_id", []uint32{1}},
+		}}
+	case "ipfix/b":
+		return transitionHeaderCase{transitionHeaderExpectation{[]uint32{0, 0, 0, 0, 0}, []uint32{0}}, []transitionHeaderMutation{
+			{"false-continuation", "cflow.sequence", []uint32{6}},
+		}}
+	default:
+		panic("unknown DNS transition capture: " + protocol + "/" + endpoint)
+	}
+}
+
+type transitionDecodedFrame struct {
+	sets, ports string
+	headers     []uint32
+}
+
+func parseTransitionFields(protocol string, decoded []byte, count int) ([]transitionDecodedFrame, error) {
+	lines := strings.Split(strings.TrimSuffix(string(decoded), "\n"), "\n")
+	if len(lines) != count {
+		return nil, fmt.Errorf("TShark frames=%d, want %d", len(lines), count)
+	}
+	wantVersion := map[string]string{"netflow_v5": "5", "netflow_v9": "9", "ipfix": "10"}[protocol]
+	headerFields := transitionHeaderFields(protocol)
+	frames := make([]transitionDecodedFrame, 0, count)
+	for index, line := range lines {
+		fields := strings.Split(line, "|")
+		if len(fields) != 4+len(headerFields) {
+			return nil, fmt.Errorf("TShark row %d columns=%d, want %d", index+1, len(fields), 4+len(headerFields))
+		}
+		if fields[0] != strconv.Itoa(index+1) || fields[1] != wantVersion {
+			return nil, fmt.Errorf("TShark row %d frame/version=%q/%q, want %d/%s", index+1, fields[0], fields[1], index+1, wantVersion)
+		}
+		frame := transitionDecodedFrame{sets: fields[2], ports: fields[3]}
+		for column, field := range headerFields {
+			value := fields[4+column]
+			if value == "" || strings.IndexFunc(value, func(r rune) bool { return r < '0' || r > '9' }) != -1 {
+				return nil, fmt.Errorf("header %s frame %d: expected one decimal scalar, got %q", field.name, index+1, value)
+			}
+			scalar, err := strconv.ParseUint(value, 10, field.bits)
+			if err != nil {
+				return nil, fmt.Errorf("header %s frame %d: invalid uint%d %q", field.name, index+1, field.bits, value)
+			}
+			frame.headers = append(frame.headers, uint32(scalar))
+		}
+		frames = append(frames, frame)
+	}
+	return frames, nil
+}
+
+func checkTransitionHeaders(protocol string, frames []transitionDecodedFrame, want transitionHeaderExpectation) error {
+	fields := transitionHeaderFields(protocol)
+	if len(frames) != len(want.sequence) || len(want.identity) != len(fields)-1 {
+		return fmt.Errorf("header expectation dimensions: frames=%d sequences=%d identity=%d", len(frames), len(want.sequence), len(want.identity))
+	}
+	for index, frame := range frames {
+		if len(frame.headers) != len(fields) {
+			return fmt.Errorf("header frame %d scalar count=%d, want %d", index+1, len(frame.headers), len(fields))
+		}
+		for column, field := range fields {
+			expected := want.sequence[index]
+			if column > 0 {
+				expected = want.identity[column-1]
+			}
+			if frame.headers[column] != expected {
+				return fmt.Errorf("header %s frame %d: got %d, want %d", field.name, index+1, frame.headers[column], expected)
+			}
+		}
+	}
+	return nil
+}
+
+// Record/cache checks deliberately run independently of header assertions. A
+// mutant cannot pass its negative control because its records failed to decode.
+func checkTransitionRecords(protocol string, frames []transitionDecodedFrame, wantPorts [][]int) error {
+	portCounts := make(map[int]int)
+	dataFrame := 0
+	for index, frame := range frames {
+		setIDs := strings.FieldsFunc(frame.sets, func(r rune) bool { return r == ',' || r == ';' })
+		if frame.ports == "" {
+			if protocol == "netflow_v5" {
+				return fmt.Errorf("v5 row %d unexpectedly has no decoded source ports", index+1)
+			}
+			wantSet := "0"
+			if protocol == "ipfix" {
+				wantSet = "2"
+			}
+			if len(setIDs) != 1 || setIDs[0] != wantSet {
+				return fmt.Errorf("template row %d flowset ids=%q, want %s", index+1, frame.sets, wantSet)
+			}
+			continue
+		}
+		if dataFrame >= len(wantPorts) {
+			return fmt.Errorf("extra decoded data frame at row %d", index+1)
+		}
+		if protocol == "netflow_v5" {
+			if len(setIDs) != 0 {
+				return fmt.Errorf("v5 data row %d unexpectedly has flowset ids=%q", index+1, frame.sets)
+			}
+		} else {
+			if len(setIDs) != 1 {
+				return fmt.Errorf("data row %d flowset ids=%q, want one data set", index+1, frame.sets)
+			}
+			setID, err := strconv.Atoi(setIDs[0])
+			if err != nil || setID < 256 {
+				return fmt.Errorf("data row %d flowset id=%q, want >=256", index+1, frame.sets)
+			}
+		}
+		values := strings.FieldsFunc(frame.ports, func(r rune) bool { return r == ',' || r == ';' })
+		if len(values) != len(wantPorts[dataFrame]) {
+			return fmt.Errorf("data row %d decoded source ports=%q, want %v", index+1, frame.ports, wantPorts[dataFrame])
+		}
+		wantSet := make(map[int]bool, len(wantPorts[dataFrame]))
+		for _, want := range wantPorts[dataFrame] {
+			wantSet[want] = true
+		}
+		for _, value := range values {
+			portNumber, err := strconv.Atoi(value)
+			if err != nil || !wantSet[portNumber] || portCounts[portNumber] != 0 {
+				return fmt.Errorf("data row %d decoded unknown/duplicate source port=%q", index+1, value)
+			}
+			portCounts[portNumber]++
+		}
+		dataFrame++
+	}
+	if dataFrame != len(wantPorts) {
+		return fmt.Errorf("TShark data frames=%d, want %d", dataFrame, len(wantPorts))
+	}
+	for _, group := range wantPorts {
+		for _, portNumber := range group {
+			if portCounts[portNumber] != 1 {
+				return fmt.Errorf("TShark source port %d count=%d, want one", portNumber, portCounts[portNumber])
+			}
+		}
+	}
+	return nil
+}
+
+func mutateTransitionHeaders(protocol string, packets []dnsTransitionDatagram, mutant transitionHeaderMutation) ([]dnsTransitionDatagram, error) {
+	// Offsets are used only to inject errors, never to extract observed headers
+	// or compute expectations. Lengths, sets, records and UDP peers are untouched.
+	offsets := map[string]map[string]int{
+		"netflow_v5": {"cflow.sequence": 16, "cflow.engine_type": 20, "cflow.engine_id": 21},
+		"netflow_v9": {"cflow.sequence": 12, "cflow.source_id": 16},
+		"ipfix":      {"cflow.sequence": 8, "cflow.od_id": 12},
+	}
+	offset, ok := offsets[protocol][mutant.field]
+	if !ok || (len(mutant.values) != 1 && len(mutant.values) != len(packets)) || len(mutant.values) == 0 {
+		return nil, fmt.Errorf("invalid transition mutant %q field/values", mutant.name)
+	}
+	width := 4
+	if mutant.field == "cflow.engine_type" || mutant.field == "cflow.engine_id" {
+		width = 1
+	}
+	out := make([]dnsTransitionDatagram, len(packets))
+	for index, packet := range packets {
+		value := mutant.values[0]
+		if len(mutant.values) > 1 {
+			value = mutant.values[index]
+		}
+		if len(packet.payload) < offset+width || (width == 1 && value > 255) {
+			return nil, fmt.Errorf("invalid transition mutant %q frame %d length/value", mutant.name, index+1)
+		}
+		out[index] = packet
+		out[index].payload = bytes.Clone(packet.payload)
+		if width == 1 {
+			out[index].payload[offset] = byte(value)
+		} else {
+			binary.BigEndian.PutUint32(out[index].payload[offset:], value)
+		}
+	}
+	return out, nil
+}
+
+func decodeTransitionCapture(t *testing.T, ctx context.Context, bin, protocol, path string, port, count int) []transitionDecodedFrame {
+	t.Helper()
+	decodeCtx, decodeCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer decodeCancel()
+	args := []string{"-r", path, "-d", fmt.Sprintf("udp.port==%d,cflow", port), "-T", "fields",
+		"-E", "separator=|", "-E", "occurrence=a", "-e", "frame.number", "-e", "cflow.version", "-e", "cflow.flowset_id", "-e", "cflow.srcport"}
+	for _, field := range transitionHeaderFields(protocol) {
+		args = append(args, "-e", field.name)
+	}
+	command := exec.CommandContext(decodeCtx, bin, args...)
+	var decoded, stderr transitionOutputBuffer
+	command.Stdout, command.Stderr = &decoded, &stderr
+	err := command.Run()
+	for suffix, data := range map[string][]byte{".fields.txt": decoded.Bytes(), ".stderr.txt": stderr.Bytes()} {
+		if writeErr := os.WriteFile(path+suffix, data, 0o600); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	if err != nil || decodeCtx.Err() != nil || decoded.overflow || stderr.overflow {
+		t.Fatalf("TShark decode failed: err=%v context=%v stdout_overflow=%v stderr_overflow=%v stderr=%s", err, decodeCtx.Err(), decoded.overflow, stderr.overflow, boundedTransitionOutput(stderr.Bytes()))
+	}
+	frames, err := parseTransitionFields(protocol, decoded.Bytes(), count)
+	if err != nil {
+		t.Fatalf("TShark fields %s: %v", path, err)
+	}
+	return frames
+}
+
+func runDNSTransitionTShark(t *testing.T, ctx context.Context, protocol, endpoint string, port int, packets []dnsTransitionDatagram, wantPorts [][]int, headers transitionHeaderCase) string {
 	t.Helper()
 	if os.Getenv("NETFLOW_DNS_TSHARK") != "1" {
 		return ""
+	}
+	if len(headers.mutants) > 16 {
+		t.Fatal("transition mutant count exceeds 16")
 	}
 	dir := transitionArtifactDir(t, protocol)
 	pcapPath := filepath.Join(dir, protocol+"-dns-transition-"+endpoint+".pcap")
@@ -440,7 +745,7 @@ func runDNSTransitionTShark(t *testing.T, protocol, endpoint string, port int, p
 	if err != nil {
 		t.Fatalf("NETFLOW_DNS_TSHARK=1 requires TShark 4.4.18: %v", err)
 	}
-	versionCtx, versionCancel := context.WithTimeout(context.Background(), time.Second)
+	versionCtx, versionCancel := context.WithTimeout(ctx, time.Second)
 	var versionBuffer, versionStderr transitionOutputBuffer
 	versionCommand := exec.CommandContext(versionCtx, resolved, "--version")
 	versionCommand.Stdout = &versionBuffer
@@ -448,7 +753,7 @@ func runDNSTransitionTShark(t *testing.T, protocol, endpoint string, port int, p
 	versionErr := versionCommand.Run()
 	versionOutput := versionBuffer.Bytes()
 	versionCancel()
-	if versionErr != nil || versionBuffer.overflow || versionStderr.overflow || !strings.Contains(string(versionOutput), "4.4.18") {
+	if versionErr != nil || versionBuffer.overflow || versionStderr.overflow || !strings.HasPrefix(string(versionOutput), "TShark (Wireshark) 4.4.18.") {
 		t.Fatalf("TShark version=%q, want 4.4.18", strings.TrimSpace(string(versionOutput)))
 	}
 	info, err := os.Stat(resolved)
@@ -459,114 +764,54 @@ func runDNSTransitionTShark(t *testing.T, protocol, endpoint string, port int, p
 	if err != nil {
 		t.Fatal(err)
 	}
-	executableHash := sha256.Sum256(executable)
 	pcap, err := os.ReadFile(pcapPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pcapHash := sha256.Sum256(pcap)
-	manifest := fmt.Sprintf("protocol=%s\nendpoint=%s\nframes=%d\nunique_source_ports=%d\ntshark=%s\ntshark_version_sha256=%x\ntshark_executable_sha256=%x\npcap_sha256=%x\n", protocol, endpoint, len(packets), countTransitionPorts(wantPorts), resolved, sha256.Sum256(versionOutput), executableHash, pcapHash)
+	manifest := fmt.Sprintf("protocol=%s\nendpoint=%s\nframes=%d\nunique_source_ports=%d\nexpected_sequences=%v\nexpected_identity=%v\ntshark=%s\ntshark_version_sha256=%x\ntshark_executable_sha256=%x\npcap_sha256=%x\n", protocol, endpoint, len(packets), countTransitionPorts(wantPorts), headers.want.sequence, headers.want.identity, resolved, sha256.Sum256(versionOutput), sha256.Sum256(executable), sha256.Sum256(pcap))
 	if err := os.WriteFile(filepath.Join(dir, "evidence.txt"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	decodeCtx, decodeCancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer decodeCancel()
-	command := exec.CommandContext(decodeCtx, resolved, "-r", pcapPath,
-		"-d", fmt.Sprintf("udp.port==%d,cflow", port), "-T", "fields",
-		"-E", "separator=|", "-E", "occurrence=a",
-		"-e", "frame.number", "-e", "cflow.version", "-e", "cflow.flowset_id", "-e", "cflow.srcport")
-	var decodedBuffer, stderrBuffer transitionOutputBuffer
-	command.Stdout = &decodedBuffer
-	command.Stderr = &stderrBuffer
-	err = command.Run()
-	decoded := decodedBuffer.Bytes()
-	if err != nil {
-		t.Fatalf("TShark decode failed: %v\nstdout=%s\nstderr=%s", err, boundedTransitionOutput(decoded), boundedTransitionOutput(stderrBuffer.Bytes()))
-	}
-	if decodeCtx.Err() != nil {
-		t.Fatalf("TShark decode timed out: %v", decodeCtx.Err())
-	}
-	if decodedBuffer.overflow || stderrBuffer.overflow {
-		t.Fatalf("TShark output exceeded bounded capture: stdout_overflow=%v stderr_overflow=%v", decodedBuffer.overflow, stderrBuffer.overflow)
-	}
-	outputPath := filepath.Join(dir, protocol+"-tshark-fields-"+endpoint+".txt")
-	if err := os.WriteFile(outputPath, decoded, 0o600); err != nil {
+	// Every call creates a fresh process/cache, including DNS A, DNS B and the
+	// idle capture that deliberately omits bootstrap packets.
+	frames := decodeTransitionCapture(t, ctx, resolved, protocol, pcapPath, port, len(packets))
+	if err := checkTransitionRecords(protocol, frames, wantPorts); err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(decoded)), "\n")
-	if len(lines) != len(packets) {
-		t.Fatalf("TShark frames=%d, want %d; output=%s", len(lines), len(packets), outputPath)
+	if err := checkTransitionHeaders(protocol, frames, headers.want); err != nil {
+		t.Fatal(err)
 	}
-	wantVersion := map[string]string{"netflow_v5": "5", "netflow_v9": "9", "ipfix": "10"}[protocol]
-	portCounts := make(map[int]int)
-	dataFrame := 0
-	for index, line := range lines {
-		fields := strings.Split(line, "|")
-		if len(fields) < 4 || fields[1] != wantVersion {
-			t.Fatalf("TShark row=%q, want cflow version %s", line, wantVersion)
-		}
-		frameNumber, err := strconv.Atoi(fields[0])
-		if err != nil || frameNumber != index+1 {
-			t.Fatalf("TShark frame number=%q at row %d, want %d", fields[0], index, index+1)
-		}
-		setIDs := strings.FieldsFunc(fields[2], func(r rune) bool { return r == ',' || r == ';' })
-		if fields[3] == "" {
-			if protocol == "netflow_v5" {
-				t.Fatalf("v5 row %d unexpectedly has no decoded source ports", index+1)
+	t.Logf("independent TShark 4.4.18 decode endpoint=%s frames=%d unique_records=%d headers=PASS artifact=%s", endpoint, len(frames), countTransitionPorts(wantPorts), dir)
+	for _, mutant := range headers.mutants {
+		t.Run("header-mutant-"+endpoint+"-"+mutant.name, func(t *testing.T) {
+			copied, err := mutateTransitionHeaders(protocol, packets, mutant)
+			if err != nil {
+				t.Fatal(err)
 			}
-			wantSet := "0"
-			if protocol == "ipfix" {
-				wantSet = "2"
+			path := filepath.Join(dir, "mutant-"+endpoint+"-"+mutant.name+".pcap")
+			if err := writeDNSTransitionPCAP(path, copied, port); err != nil {
+				t.Fatal(err)
 			}
-			if len(setIDs) != 1 || setIDs[0] != wantSet {
-				t.Fatalf("template row %d flowset ids=%q, want %s", index+1, fields[2], wantSet)
+			observed := decodeTransitionCapture(t, ctx, resolved, protocol, path, port, len(copied))
+			if err := checkTransitionRecords(protocol, observed, wantPorts); err != nil {
+				t.Fatalf("mutant record/cache control failed: %v", err)
 			}
-			continue
-		}
-		if dataFrame >= len(wantPorts) {
-			t.Fatalf("extra decoded data frame at row %d", index+1)
-		}
-		if protocol == "netflow_v5" {
-			if len(setIDs) != 0 {
-				t.Fatalf("v5 data row %d unexpectedly has flowset ids=%q", index+1, fields[2])
+			for index, frame := range observed {
+				if frame.sets != frames[index].sets || frame.ports != frames[index].ports {
+					t.Fatalf("mutant changed template/record fields at frame %d", index+1)
+				}
 			}
-		} else {
-			if len(setIDs) != 1 {
-				t.Fatalf("data row %d flowset ids=%q, want one data set", index+1, fields[2])
+			headerErr := checkTransitionHeaders(protocol, observed, headers.want)
+			if headerErr == nil || !strings.HasPrefix(headerErr.Error(), "header "+mutant.field+" frame ") {
+				t.Fatalf("mutant must fail named header assertion %s; got %v", mutant.field, headerErr)
 			}
-			setID, err := strconv.Atoi(setIDs[0])
-			if err != nil || setID < 256 {
-				t.Fatalf("data row %d flowset id=%q, want >=256", index+1, fields[2])
+			result := fmt.Sprintf("original_control=PASS\ndecoder=PASS\nrecords_and_templates=PASS\nmutated_field=%s\nmutated_values=%v\nrejection=%v\n", mutant.field, mutant.values, headerErr)
+			if err := os.WriteFile(path+".result.txt", []byte(result), 0o600); err != nil {
+				t.Fatal(err)
 			}
-		}
-		values := strings.FieldsFunc(fields[3], func(r rune) bool { return r == ',' || r == ';' })
-		if len(values) != len(wantPorts[dataFrame]) {
-			t.Fatalf("data row %d decoded source ports=%q, want %v", index+1, fields[3], wantPorts[dataFrame])
-		}
-		wantSet := make(map[int]bool, len(wantPorts[dataFrame]))
-		for _, want := range wantPorts[dataFrame] {
-			wantSet[want] = true
-		}
-		for _, value := range values {
-			portNumber, err := strconv.Atoi(value)
-			if err != nil || !wantSet[portNumber] || portCounts[portNumber] != 0 {
-				t.Fatalf("data row %d decoded unknown/duplicate source port=%q", index+1, value)
-			}
-			portCounts[portNumber]++
-		}
-		dataFrame++
+			t.Logf("independent mutant rejected: %v; records/templates unchanged", headerErr)
+		})
 	}
-	if dataFrame != len(wantPorts) {
-		t.Fatalf("TShark data frames=%d, want %d; output=%s", dataFrame, len(wantPorts), outputPath)
-	}
-	for _, group := range wantPorts {
-		for _, portNumber := range group {
-			if portCounts[portNumber] != 1 {
-				t.Fatalf("TShark source port %d count=%d, want one; output=%s", portNumber, portCounts[portNumber], outputPath)
-			}
-		}
-	}
-	t.Logf("independent TShark 4.4.18 decode endpoint=%s frames=%d unique_records=%d artifact=%s", endpoint, len(lines), countTransitionPorts(wantPorts), dir)
 	return dir
 }
 
@@ -702,8 +947,8 @@ func TestDNSResolutionTransitionRealUDP(t *testing.T) {
 			assertDNSTransitionResolverTrace(t, fixture.lookup)
 			aCapture := append(append([]dnsTransitionDatagram{}, startup...), startupData, retainedData)
 			bCapture := append(append([]dnsTransitionDatagram{}, changed...), changedData)
-			dirA := runDNSTransitionTShark(t, protocol, "a", port, aCapture, [][]int{{10001, 10002, 10003}, {10004, 10005, 10006}})
-			dirB := runDNSTransitionTShark(t, protocol, "b", port, bCapture, [][]int{{10007, 10008, 10009}})
+			dirA := runDNSTransitionTShark(t, ctx, protocol, "a", port, aCapture, [][]int{{10001, 10002, 10003}, {10004, 10005, 10006}}, dnsTransitionHeaderCase(protocol, "a"))
+			dirB := runDNSTransitionTShark(t, ctx, protocol, "b", port, bCapture, [][]int{{10007, 10008, 10009}}, dnsTransitionHeaderCase(protocol, "b"))
 
 			snapshot := assertDNSMetrics(t, fixture, protocol)
 			if dirA != "" {
@@ -793,4 +1038,326 @@ func assertDNSMetrics(t *testing.T, fixture *dnsTransitionFixture, protocol stri
 	snapshot := conditionalSnapshotFromMetrics(&metrics)
 	snapshot.Source = "TestDNSResolutionTransitionRealUDP"
 	return snapshot
+}
+
+type transitionHeaderLiteralCase struct {
+	name      string
+	protocol  string
+	headers   transitionHeaderCase
+	sequence  []uint32
+	identity  []uint32
+	templates int
+	ports     [][]int
+}
+
+func transitionHeaderLiteralCases() []transitionHeaderLiteralCase {
+	return []transitionHeaderLiteralCase{
+		{
+			name: "dns-a-v5", protocol: "netflow_v5", headers: dnsTransitionHeaderCase("netflow_v5", "a"),
+			sequence: []uint32{0, 3}, identity: []uint32{0, 0},
+			ports: [][]int{{10001, 10002, 10003}, {10004, 10005, 10006}},
+		},
+		{
+			name: "dns-b-v5", protocol: "netflow_v5", headers: dnsTransitionHeaderCase("netflow_v5", "b"),
+			sequence: []uint32{0}, identity: []uint32{0, 0},
+			ports: [][]int{{10007, 10008, 10009}},
+		},
+		{
+			name: "dns-a-v9", protocol: "netflow_v9", headers: dnsTransitionHeaderCase("netflow_v9", "a"),
+			sequence: []uint32{0, 1, 2, 3, 4, 5}, identity: []uint32{0}, templates: 4,
+			ports: [][]int{{10001, 10002, 10003}, {10004, 10005, 10006}},
+		},
+		{
+			name: "dns-b-v9", protocol: "netflow_v9", headers: dnsTransitionHeaderCase("netflow_v9", "b"),
+			sequence: []uint32{0, 1, 2, 3, 4}, identity: []uint32{0}, templates: 4,
+			ports: [][]int{{10007, 10008, 10009}},
+		},
+		{
+			name: "dns-a-ipfix", protocol: "ipfix", headers: dnsTransitionHeaderCase("ipfix", "a"),
+			sequence: []uint32{0, 0, 0, 0, 0, 3}, identity: []uint32{0}, templates: 4,
+			ports: [][]int{{10001, 10002, 10003}, {10004, 10005, 10006}},
+		},
+		{
+			name: "dns-b-ipfix", protocol: "ipfix", headers: dnsTransitionHeaderCase("ipfix", "b"),
+			sequence: []uint32{0, 0, 0, 0, 0}, identity: []uint32{0}, templates: 4,
+			ports: [][]int{{10007, 10008, 10009}},
+		},
+		{
+			name: "idle-v5", protocol: "netflow_v5", headers: timeRefreshHeaderCase("netflow_v5"),
+			sequence: []uint32{0, 3, 6}, identity: []uint32{0, 0},
+			ports: [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}},
+		},
+		{
+			name: "idle-v9", protocol: "netflow_v9", headers: timeRefreshHeaderCase("netflow_v9"),
+			sequence: []uint32{4, 5, 6, 7, 8}, identity: []uint32{0}, templates: 2,
+			ports: [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}},
+		},
+		{
+			name: "idle-ipfix", protocol: "ipfix", headers: timeRefreshHeaderCase("ipfix"),
+			sequence: []uint32{0, 0, 0, 3, 6}, identity: []uint32{0}, templates: 2,
+			ports: [][]int{{20001, 20002, 20003}, {20004, 20005, 20006}, {20007, 20008, 20009}},
+		},
+	}
+}
+
+func transitionHeaderTestFrames(protocol string, want transitionHeaderExpectation, templates int, ports [][]int) []transitionDecodedFrame {
+	frames := make([]transitionDecodedFrame, len(want.sequence))
+	for index, sequence := range want.sequence {
+		frames[index].headers = append([]uint32{sequence}, want.identity...)
+		if index < templates {
+			frames[index].sets = "0"
+			if protocol == "ipfix" {
+				frames[index].sets = "2"
+			}
+			continue
+		}
+		portGroup := ports[index-templates]
+		values := make([]string, len(portGroup))
+		for portIndex, port := range portGroup {
+			values[portIndex] = strconv.Itoa(port)
+		}
+		frames[index].ports = strings.Join(values, ",")
+		if protocol != "netflow_v5" {
+			frames[index].sets = "256"
+		}
+	}
+	return frames
+}
+
+func transitionHeaderTestMutation(frames []transitionDecodedFrame, protocol string, mutation transitionHeaderMutation) ([]transitionDecodedFrame, error) {
+	fields := transitionHeaderFields(protocol)
+	column := -1
+	for index, field := range fields {
+		if field.name == mutation.field {
+			column = index
+			break
+		}
+	}
+	if column < 0 || len(mutation.values) == 0 || (len(mutation.values) != 1 && len(mutation.values) != len(frames)) {
+		return nil, fmt.Errorf("invalid test mutation %q", mutation.name)
+	}
+	out := make([]transitionDecodedFrame, len(frames))
+	for index, frame := range frames {
+		out[index] = frame
+		out[index].headers = append([]uint32(nil), frame.headers...)
+		value := mutation.values[0]
+		if len(mutation.values) > 1 {
+			value = mutation.values[index]
+		}
+		out[index].headers[column] = value
+	}
+	return out, nil
+}
+
+func transitionHeaderFieldLine(protocol string, values []string) []byte {
+	version := map[string]string{"netflow_v5": "5", "netflow_v9": "9", "ipfix": "10"}[protocol]
+	columns := []string{"1", version, "0", ""}
+	columns = append(columns, values...)
+	return []byte(strings.Join(columns, "|") + "\n")
+}
+
+func transitionHeaderScalarMax(bits int) string {
+	if bits == 8 {
+		return "255"
+	}
+	return "4294967295"
+}
+
+func transitionHeaderScalarOverflow(bits int) string {
+	if bits == 8 {
+		return "256"
+	}
+	return "4294967296"
+}
+
+func TestTransitionHeaderLiteralAccounting(t *testing.T) {
+	mutantCount := 0
+	for _, tc := range transitionHeaderLiteralCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			if !slices.Equal(tc.headers.want.sequence, tc.sequence) {
+				t.Fatalf("helper sequence=%v, want literal %v", tc.headers.want.sequence, tc.sequence)
+			}
+			if !slices.Equal(tc.headers.want.identity, tc.identity) {
+				t.Fatalf("helper identity=%v, want literal %v", tc.headers.want.identity, tc.identity)
+			}
+			frames := transitionHeaderTestFrames(tc.protocol, transitionHeaderExpectation{sequence: tc.sequence, identity: tc.identity}, tc.templates, tc.ports)
+			if err := checkTransitionHeaders(tc.protocol, frames, transitionHeaderExpectation{sequence: tc.sequence, identity: tc.identity}); err != nil {
+				t.Fatalf("valid headers rejected: %v", err)
+			}
+			if err := checkTransitionRecords(tc.protocol, frames, tc.ports); err != nil {
+				t.Fatalf("valid records/templates rejected: %v", err)
+			}
+			for _, mutant := range tc.headers.mutants {
+				mutantCount++
+				mutated, err := transitionHeaderTestMutation(frames, tc.protocol, mutant)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := checkTransitionRecords(tc.protocol, mutated, tc.ports); err != nil {
+					t.Fatalf("%s changed record/template evidence: %v", mutant.name, err)
+				}
+				rejection := checkTransitionHeaders(tc.protocol, mutated, transitionHeaderExpectation{sequence: tc.sequence, identity: tc.identity})
+				if rejection == nil || !strings.HasPrefix(rejection.Error(), "header "+mutant.field+" frame ") {
+					t.Fatalf("%s did not produce named %s rejection: %v", mutant.name, mutant.field, rejection)
+				}
+			}
+		})
+	}
+	if mutantCount != 13 || mutantCount > 16 {
+		t.Fatalf("header mutant roster=%d, want 13 and <=16", mutantCount)
+	}
+}
+
+func TestTransitionHeaderScalarParsing(t *testing.T) {
+	for _, tc := range []struct {
+		protocol string
+		fields   []transitionScalarField
+	}{
+		{"netflow_v5", []transitionScalarField{{"cflow.sequence", 32}, {"cflow.engine_type", 8}, {"cflow.engine_id", 8}}},
+		{"netflow_v9", []transitionScalarField{{"cflow.sequence", 32}, {"cflow.source_id", 32}}},
+		{"ipfix", []transitionScalarField{{"cflow.sequence", 32}, {"cflow.od_id", 32}}},
+	} {
+		t.Run(tc.protocol, func(t *testing.T) {
+			protocol, fields := tc.protocol, tc.fields
+			if got := transitionHeaderFields(protocol); !slices.Equal(got, fields) {
+				t.Fatalf("header field definitions=%v, want %v", got, fields)
+			}
+			valid := make([]string, len(fields))
+			for index, field := range fields {
+				valid[index] = transitionHeaderScalarMax(field.bits)
+			}
+			frames, err := parseTransitionFields(protocol, transitionHeaderFieldLine(protocol, valid), 1)
+			if err != nil {
+				t.Fatalf("valid width edges rejected: %v", err)
+			}
+			if len(frames) != 1 || len(frames[0].headers) != len(fields) {
+				t.Fatalf("valid scalar row=%+v, want %d fields", frames, len(fields))
+			}
+			for index, field := range fields {
+				if got := strconv.FormatUint(uint64(frames[0].headers[index]), 10); got != valid[index] {
+					t.Fatalf("decoded %s=%s, want %s", field.name, got, valid[index])
+				}
+				for _, invalid := range []struct {
+					name, value string
+				}{
+					{"missing", ""},
+					{"malformed", "1.0"},
+					{"duplicate", "0,0"},
+					{"signed", "+1"},
+					{"negative", "-1"},
+					{"whitespace", "0 "},
+					{"hex", "0x1"},
+					{"overflow", transitionHeaderScalarOverflow(field.bits)},
+				} {
+					values := make([]string, len(fields))
+					for valueIndex := range fields {
+						values[valueIndex] = "0"
+						if valueIndex == index {
+							values[valueIndex] = invalid.value
+						}
+					}
+					_, parseErr := parseTransitionFields(protocol, transitionHeaderFieldLine(protocol, values), 1)
+					if parseErr == nil || !strings.Contains(parseErr.Error(), field.name) {
+						t.Errorf("%s %s accepted or unnamed: %v", field.name, invalid.name, parseErr)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestTransitionHeaderRetainsRecordAndFrameControls(t *testing.T) {
+	caseData := transitionHeaderLiteralCases()[2] // DNS A v9 includes templates and data.
+	frames := transitionHeaderTestFrames(caseData.protocol, transitionHeaderExpectation{sequence: caseData.sequence, identity: caseData.identity}, caseData.templates, caseData.ports)
+
+	t.Run("duplicate-record", func(t *testing.T) {
+		mutated := append([]transitionDecodedFrame(nil), frames...)
+		mutated[4].ports = "10001,10001,10003"
+		if err := checkTransitionRecords(caseData.protocol, mutated, caseData.ports); err == nil || !strings.Contains(err.Error(), "duplicate") {
+			t.Fatalf("duplicate record was not rejected: %v", err)
+		}
+	})
+	t.Run("missing-record", func(t *testing.T) {
+		mutated := append([]transitionDecodedFrame(nil), frames...)
+		mutated[4].ports = "10001,10003"
+		if err := checkTransitionRecords(caseData.protocol, mutated, caseData.ports); err == nil || !strings.Contains(err.Error(), "source ports") {
+			t.Fatalf("missing record was not rejected: %v", err)
+		}
+	})
+	t.Run("wrong-template", func(t *testing.T) {
+		mutated := append([]transitionDecodedFrame(nil), frames...)
+		mutated[0].sets = "99"
+		if err := checkTransitionRecords(caseData.protocol, mutated, caseData.ports); err == nil || !strings.Contains(err.Error(), "template") {
+			t.Fatalf("wrong template was not rejected: %v", err)
+		}
+	})
+	t.Run("wrong-frame", func(t *testing.T) {
+		line := transitionHeaderFieldLine(caseData.protocol, []string{"0", "0"})
+		line = []byte(strings.Replace(string(line), "1|9|", "2|9|", 1))
+		if _, err := parseTransitionFields(caseData.protocol, line, 1); err == nil || !strings.Contains(err.Error(), "frame/version") {
+			t.Fatalf("wrong frame was not rejected: %v", err)
+		}
+	})
+	t.Run("wrong-version", func(t *testing.T) {
+		line := transitionHeaderFieldLine(caseData.protocol, []string{"0", "0"})
+		line = []byte(strings.Replace(string(line), "1|9|", "1|10|", 1))
+		if _, err := parseTransitionFields(caseData.protocol, line, 1); err == nil || !strings.Contains(err.Error(), "frame/version") {
+			t.Fatalf("wrong version was not rejected: %v", err)
+		}
+	})
+	t.Run("missing-column", func(t *testing.T) {
+		line := transitionHeaderFieldLine(caseData.protocol, []string{"0"})
+		if _, err := parseTransitionFields(caseData.protocol, line, 1); err == nil || !strings.Contains(err.Error(), "columns") {
+			t.Fatalf("missing column was not rejected: %v", err)
+		}
+	})
+}
+
+func TestTransitionHeaderMutationCopiesAndPreservesFraming(t *testing.T) {
+	peer := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 40000}
+	offsets := map[string]map[string]int{
+		"netflow_v5": {"cflow.sequence": 16, "cflow.engine_type": 20, "cflow.engine_id": 21},
+		"netflow_v9": {"cflow.sequence": 12, "cflow.source_id": 16},
+		"ipfix":      {"cflow.sequence": 8, "cflow.od_id": 12},
+	}
+	for _, protocol := range []string{"netflow_v5", "netflow_v9", "ipfix"} {
+		for _, field := range transitionHeaderFields(protocol) {
+			t.Run(protocol+"/"+field.name, func(t *testing.T) {
+				original := []dnsTransitionDatagram{
+					{payload: bytes.Repeat([]byte{0xa5}, 40), peer: peer, destination: netip.MustParseAddr("127.0.0.1"), at: time.Unix(1, 2)},
+					{payload: bytes.Repeat([]byte{0xa5}, 40), peer: peer, destination: netip.MustParseAddr("127.0.0.1"), at: time.Unix(3, 4)},
+				}
+				before := [][]byte{bytes.Clone(original[0].payload), bytes.Clone(original[1].payload)}
+				mutated, err := mutateTransitionHeaders(protocol, original, transitionHeaderMutation{name: "copy", field: field.name, values: []uint32{1, 2}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for index := range original {
+					if !bytes.Equal(original[index].payload, before[index]) || len(mutated[index].payload) != len(original[index].payload) {
+						t.Fatalf("mutation changed original/framing at frame %d", index+1)
+					}
+					if &mutated[index].payload[0] == &original[index].payload[0] {
+						t.Fatalf("mutation reused payload backing array at frame %d", index+1)
+					}
+					got := uint32(mutated[index].payload[offsets[protocol][field.name]])
+					if field.bits == 32 {
+						got = binary.BigEndian.Uint32(mutated[index].payload[offsets[protocol][field.name]:])
+					}
+					if got != uint32(index+1) {
+						t.Fatalf("mutation field %s frame %d=%d, want %d", field.name, index+1, got, index+1)
+					}
+					expected := bytes.Clone(before[index])
+					offset, width := offsets[protocol][field.name], field.bits/8
+					clear(expected[offset : offset+width])
+					expected[offset+width-1] = byte(index + 1)
+					if !bytes.Equal(mutated[index].payload, expected) {
+						t.Fatalf("mutation changed bytes outside %s at frame %d", field.name, index+1)
+					}
+					if mutated[index].peer != original[index].peer || mutated[index].destination != original[index].destination || !mutated[index].at.Equal(original[index].at) {
+						t.Fatalf("mutation changed frame envelope identity at frame %d", index+1)
+					}
+				}
+			})
+		}
+	}
 }

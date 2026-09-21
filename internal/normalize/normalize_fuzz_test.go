@@ -220,7 +220,7 @@ func normalizeFuzzOracle(record plog.LogRecord) normalizeFuzzExpectation {
 				if schema.name == "source.address" && ip.Is6() {
 					want.family = wire.FamilyIPv6
 				}
-				if schema.name != "flow.sampler_address" && ip.Is4() != (want.family == wire.FamilyIPv4) {
+				if schema.name != "flow.sampler_address" && schema.name != "flow.next_hop" && schema.name != "flow.bgp_next_hop" && ip.Is4() != (want.family == wire.FamilyIPv4) {
 					return reject(ErrInvalidValue)
 				}
 				if ip.Is4() {

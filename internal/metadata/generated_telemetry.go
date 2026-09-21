@@ -3,10 +3,12 @@
 package metadata
 
 import (
+	"context"
 	"errors"
 	"sync"
 
 	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/embedded"
 	"go.opentelemetry.io/otel/trace"
 
 	"go.opentelemetry.io/collector/component"
@@ -23,18 +25,21 @@ func Tracer(settings component.TelemetrySettings) trace.Tracer {
 // TelemetryBuilder provides an interface for components to report telemetry
 // as defined in metadata and user config.
 type TelemetryBuilder struct {
-	meter                         metric.Meter
-	mu                            sync.Mutex
-	registrations                 []metric.Registration
-	NetflowExporterAdmission      metric.Int64Counter
-	NetflowExporterBytes          metric.Int64Counter
-	NetflowExporterDataMessages   metric.Int64Counter
-	NetflowExporterDNS            metric.Int64Counter
-	NetflowExporterEndpointEpochs metric.Int64Counter
-	NetflowExporterFailures       metric.Int64Counter
-	NetflowExporterLosses         metric.Int64Counter
-	NetflowExporterRecords        metric.Int64Counter
-	NetflowExporterTemplates      metric.Int64Counter
+	meter                          metric.Meter
+	mu                             sync.Mutex
+	registrations                  []metric.Registration
+	NetflowExporterAdmission       metric.Int64Counter
+	NetflowExporterBytes           metric.Int64Counter
+	NetflowExporterDataMessages    metric.Int64Counter
+	NetflowExporterDNS             metric.Int64Counter
+	NetflowExporterEndpointEpochs  metric.Int64Counter
+	NetflowExporterFailures        metric.Int64Counter
+	NetflowExporterLosses          metric.Int64Counter
+	NetflowExporterRecords         metric.Int64Counter
+	NetflowExporterRejectedRecords metric.Int64Counter
+	NetflowExporterTemplates       metric.Int64Counter
+	NetflowExporterUptimeExhausted metric.Int64ObservableGauge
+	NetflowExporterUptimeRemaining metric.Float64ObservableGauge
 }
 
 // TelemetryBuilderOption applies changes to default builder.
@@ -46,6 +51,56 @@ type telemetryBuilderOptionFunc func(mb *TelemetryBuilder)
 
 func (tbof telemetryBuilderOptionFunc) apply(mb *TelemetryBuilder) {
 	tbof(mb)
+}
+
+// RegisterNetflowExporterUptimeExhaustedCallback sets callback for observable NetflowExporterUptimeExhausted metric.
+func (builder *TelemetryBuilder) RegisterNetflowExporterUptimeExhaustedCallback(cb metric.Int64Callback) error {
+	reg, err := builder.meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		cb(ctx, &observerInt64{inst: builder.NetflowExporterUptimeExhausted, obs: o})
+		return nil
+	}, builder.NetflowExporterUptimeExhausted)
+	if err != nil {
+		return err
+	}
+	builder.mu.Lock()
+	defer builder.mu.Unlock()
+	builder.registrations = append(builder.registrations, reg)
+	return nil
+}
+
+// RegisterNetflowExporterUptimeRemainingCallback sets callback for observable NetflowExporterUptimeRemaining metric.
+func (builder *TelemetryBuilder) RegisterNetflowExporterUptimeRemainingCallback(cb metric.Float64Callback) error {
+	reg, err := builder.meter.RegisterCallback(func(ctx context.Context, o metric.Observer) error {
+		cb(ctx, &observerFloat64{inst: builder.NetflowExporterUptimeRemaining, obs: o})
+		return nil
+	}, builder.NetflowExporterUptimeRemaining)
+	if err != nil {
+		return err
+	}
+	builder.mu.Lock()
+	defer builder.mu.Unlock()
+	builder.registrations = append(builder.registrations, reg)
+	return nil
+}
+
+type observerInt64 struct {
+	embedded.Int64Observer
+	inst metric.Int64Observable
+	obs  metric.Observer
+}
+
+func (oi *observerInt64) Observe(value int64, opts ...metric.ObserveOption) {
+	oi.obs.ObserveInt64(oi.inst, value, opts...)
+}
+
+type observerFloat64 struct {
+	embedded.Float64Observer
+	inst metric.Float64Observable
+	obs  metric.Observer
+}
+
+func (oi *observerFloat64) Observe(value float64, opts ...metric.ObserveOption) {
+	oi.obs.ObserveFloat64(oi.inst, value, opts...)
 }
 
 // Shutdown unregister all registered callbacks for async instruments.
@@ -114,10 +169,28 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 		metric.WithUnit("{record}"),
 	)
 	errs = errors.Join(errs, err)
+	builder.NetflowExporterRejectedRecords, err = builder.meter.Int64Counter(
+		"otelcol_netflow.exporter.rejected_records",
+		metric.WithDescription("Rejected source records by fixed first rejection reason. These also count as records with invalid outcome. [Alpha]"),
+		metric.WithUnit("{record}"),
+	)
+	errs = errors.Join(errs, err)
 	builder.NetflowExporterTemplates, err = builder.meter.Int64Counter(
 		"otelcol_netflow.exporter.templates",
 		metric.WithDescription("Template datagrams by bootstrap or refresh handoff result, including unpublished candidate writes. [Alpha]"),
 		metric.WithUnit("{message}"),
+	)
+	errs = errors.Join(errs, err)
+	builder.NetflowExporterUptimeExhausted, err = builder.meter.Int64ObservableGauge(
+		"otelcol_netflow.exporter.uptime_exhausted",
+		metric.WithDescription("Whether the published exporter epoch has latched its elapsed-uptime exhaustion state. [Alpha]"),
+		metric.WithUnit("1"),
+	)
+	errs = errors.Join(errs, err)
+	builder.NetflowExporterUptimeRemaining, err = builder.meter.Float64ObservableGauge(
+		"otelcol_netflow.exporter.uptime_remaining",
+		metric.WithDescription("Remaining origin-relative millisecond slots before the first elapsed-uptime overflow, expressed in seconds. [Alpha]"),
+		metric.WithUnit("s"),
 	)
 	errs = errors.Join(errs, err)
 	return &builder, errs

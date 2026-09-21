@@ -51,8 +51,8 @@ func (r *Runtime) runRefresh(ctx context.Context, timer transport.Timer) {
 	}
 }
 
-// refreshTemplates first checks without send to avoid making data admission
-// busy for an early timer. Only a due round waits for send; this one registered
+// refreshTemplates first checks without send to avoid making data callers wait
+// for an early timer. Only a due round waits for send; this one registered
 // worker is the sole template waiter, and Shutdown never waits behind send.
 func (r *Runtime) refreshTemplates(ctx context.Context) time.Duration {
 	interval := r.config.State.RefreshInterval
@@ -66,8 +66,10 @@ func (r *Runtime) refreshTemplates(ctx context.Context) time.Duration {
 	if delay := refreshRemaining(current.state.Progress(), mono, interval); delay > 0 {
 		return delay
 	}
-	r.send.Lock()
-	defer r.send.Unlock()
+	if !r.send.acquire(ctx) {
+		return interval
+	}
+	defer r.send.release()
 	// Consume wakes were queued under send. Discard the pending recheck, not
 	// a second round, before attempting any write; failure then waits a full
 	// interval instead of immediately retrying a queued timer/Consume trigger.

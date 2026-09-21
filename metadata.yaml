@@ -367,6 +367,10 @@ attributes:
     description: Fixed admission or operation failure reason.
     type: string
     enum: [accepted, busy, closed, preflight, invalid_context, unavailable, internal, candidate, bootstrap, refresh]
+  rejection_reason:
+    description: Fixed first reason a source record was rejected; distinct from admission and operation failures.
+    type: string
+    enum: [unsupported_body, missing_field, invalid_type, invalid_value, map_miss, family_mismatch, protocol_mismatch, time_invalid, custom_unavailable, custom_invalid, record_too_large, record_invalid, other]
 telemetry:
   metrics:
     netflow.exporter.admission:
@@ -425,6 +429,13 @@ telemetry:
       unit: "{record}"
       sum: {value_type: int, monotonic: true}
       attributes: [outcome]
+    netflow.exporter.rejected_records:
+      enabled: true
+      description: Rejected source records by fixed first rejection reason. These also count as records with invalid outcome.
+      stability: alpha
+      unit: "{record}"
+      sum: {value_type: int, monotonic: true}
+      attributes: [rejection_reason]
     netflow.exporter.templates:
       enabled: true
       description: Template datagrams by bootstrap or refresh handoff result, including unpublished candidate writes.
@@ -432,3 +443,17 @@ telemetry:
       unit: "{message}"
       sum: {value_type: int, monotonic: true}
       attributes: [message_kind, outcome]
+    netflow.exporter.uptime_exhausted:
+      enabled: true
+      description: Whether the published exporter epoch has latched its elapsed-uptime exhaustion state.
+      stability: alpha
+      unit: "1"
+      gauge: {value_type: int, async: true}
+      attributes: []
+    netflow.exporter.uptime_remaining:
+      enabled: true
+      description: Remaining origin-relative millisecond slots before the first elapsed-uptime overflow, expressed in seconds.
+      stability: alpha
+      unit: s
+      gauge: {value_type: double, async: true}
+      attributes: []

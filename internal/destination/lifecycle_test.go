@@ -277,10 +277,16 @@ func TestPublicationRegistrationAndCommits(t *testing.T) {
 			r = newRuntimeForTest(t, protocol, runtimeRemote, func(context.Context, netip.AddrPort) (transport.Conn, error) {
 				r.lifecycle.Lock()
 				defer r.lifecycle.Unlock()
-				if r.attempt == nil || r.attempt.candidate != nil || r.published != nil || !r.send.TryLock() {
+				sendAvailable := false
+				select {
+				case <-r.send.token:
+					sendAvailable = true
+				default:
+				}
+				if r.attempt == nil || r.attempt.candidate != nil || r.published != nil || !sendAvailable {
 					t.Fatal("dial was not registered outside send")
 				}
-				r.send.Unlock()
+				r.send.release()
 				ledger = append(ledger, "dial")
 				return conn, nil
 			}, testclock.New(4_000_000_000, 1))

@@ -8,13 +8,14 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-// At most 33 local series per instance: the original eight result/loss series,
-// five admission reasons, six byte series, four template series, two DNS results,
-// one publication counter and seven failure reasons. The union has ten fixed
-// reasons. Instance IDs come only from trusted Collector configuration.
+// At most 48 local series per instance: the original result/loss, admission,
+// byte, template, DNS, publication and failure series plus thirteen fixed
+// rejected-record reasons and the two lifetime gauges. Instance IDs come only
+// from trusted Collector configuration.
 type telemetry struct {
-	builder  *metadata.TelemetryBuilder
-	instance attribute.KeyValue
+	builder     *metadata.TelemetryBuilder
+	instance    attribute.KeyValue
+	lifetimeReg metric.Registration
 }
 
 func (t telemetry) record(ctx context.Context, r *destination.PackResult) {
@@ -31,6 +32,15 @@ func (t telemetry) record(ctx context.Context, r *destination.PackResult) {
 		if entry.value > 0 {
 			t.builder.NetflowExporterRecords.Add(ctx, int64(entry.value), metric.WithAttributes(t.instance, attribute.String("outcome", entry.outcome)))
 		}
+	}
+	for reason, value := range r.RejectionCounts() {
+		if value == 0 {
+			continue
+		}
+		t.builder.NetflowExporterRejectedRecords.Add(ctx, int64(value), metric.WithAttributes(
+			t.instance,
+			attribute.String("rejection_reason", destination.RejectionReason(reason).Label()),
+		))
 	}
 	for _, entry := range []struct {
 		outcome string

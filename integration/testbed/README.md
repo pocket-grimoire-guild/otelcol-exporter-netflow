@@ -55,6 +55,34 @@ qualify wall-clock template refresh, remote delivery, physical NIC behavior, or
 general receiver security. A passing run demonstrates bounded execution and
 the stated local observations only.
 
+For a bounded receiver interruption check, use a fresh artifact root and run
+the recovery scenario after building the same generated Collector:
+
+```sh
+export TESTBED_SCENARIO=recovery
+export ARTIFACT_PARENT=/tmp/netflow-testbed-recovery
+integration/testbed/run.sh
+```
+
+The scenario offers 40 unique records per protocol: three warm records, three
+offers while the receiver socket is closed, then 34 offers after rebinding the
+same receiver port. It uses loopback, finite deadlines, bounded logs and
+captures, process-group cleanup and a fresh run tree. For v9 and IPFIX, the
+recovery configuration uses packet-count refresh 20 so template bootstrap and
+refresh behavior can be observed; production defaults are unchanged.
+
+The recovery evidence keeps the exporter peer and endpoint epoch, local outcome
+and lifetime/drop counters, receiver epochs, call results and independent UDP
+receipt/decode observations separate. A missing receipt during the closed
+socket interval is an observation-window result, not proof of remote loss.
+TShark must account for warm, combined and resumed captures, including the
+fresh-cache template boundary; v5 decodes without templates. Template or
+sequence ambiguity, missing warm state, late outage receipts and incomplete
+decoder ledgers fail the bounded case visibly. TERM/INT must cancel the work
+and reap the Collector process group; forced cleanup or nonzero shutdown is a
+failure. This scenario remains local loopback evidence and does not establish
+remote UDP delivery or wall-clock refresh qualification.
+
 Run the nested tests with:
 
 ```sh

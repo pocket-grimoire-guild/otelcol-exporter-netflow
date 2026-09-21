@@ -316,11 +316,23 @@ func TestShutdownJoinsIdleRefresh(t *testing.T) {
 				clock.Advance(0, uint64(30*time.Second))
 				fireRefresh(t, timer)
 				waitRuntimeSignal(t, entered)
-				if _, err := r.Pack(context.Background(), validPackerLogs(t), nil); err != ErrRuntimeBusy {
-					t.Fatalf("Pack during idle write = %v", err)
+				packDone := make(chan error, 1)
+				go func() {
+					defer close(packDone)
+					_, err := r.Pack(context.Background(), validPackerLogs(t), nil)
+					packDone <- err
+				}()
+				waitPackRegistration(t, r)
+				select {
+				case err := <-packDone:
+					t.Fatalf("Pack completed while idle write was gated: %v", err)
+				default:
 				}
 				done := make(chan error, 1)
-				go func() { done <- r.Shutdown(context.Background()) }()
+				go func() {
+					defer close(done)
+					done <- r.Shutdown(context.Background())
+				}()
 				waitRuntimeSignal(t, conn.closed)
 				if full {
 					select {
@@ -332,6 +344,9 @@ func TestShutdownJoinsIdleRefresh(t *testing.T) {
 				}
 				if err := waitRuntimeError(t, done); err != nil {
 					t.Fatal(err)
+				}
+				if err := waitRuntimeError(t, packDone); !errors.Is(err, ErrRuntimeClosed) {
+					t.Fatalf("waiting Pack after shutdown = %v", err)
 				}
 				assertRuntimeIdle(t, r, false)
 				wantShape := 0
@@ -349,6 +364,26 @@ func TestShutdownJoinsIdleRefresh(t *testing.T) {
 					t.Fatal("shutdown did not stop template timer")
 				}
 			})
+		}
+	}
+}
+
+func waitPackRegistration(t *testing.T, r *Runtime) {
+	t.Helper()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		r.lifecycle.Lock()
+		registered := r.packCancel != nil
+		r.lifecycle.Unlock()
+		if registered {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("Pack did not register before waiting")
+		default:
+			time.Sleep(time.Millisecond)
 		}
 	}
 }

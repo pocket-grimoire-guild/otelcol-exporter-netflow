@@ -89,10 +89,17 @@ mapping:
 
 Other valid receiver tokens remain unconfigured until an operator supplies a
 sequence containing them; sequences never merge with hidden values. Every
-parsed input must satisfy the pinned schema with exact OTel types. Unknown and
-unselected attributes are traversed by bounded preflight but are not copied or
-treated as wire loss. A `send_raw` formatted body is unsupported and rejects
-before mapping.
+parsed input must satisfy the pinned schema with exact OTel types. Structural
+preflight walks resource/scope containers only to count records and check
+structural validity. Normalization scans top-level log attributes to validate
+canonical values; selected custom sources follow their own mapping rules.
+Unknown and unselected noncanonical attributes are ignored for mapping and loss,
+but present canonical
+attributes are still normalized even when unselected. Preflight does not
+inspect arbitrary metadata. Work and failed-subset copies still scale with
+input size, and extreme pdata nesting retains the documented
+[stack-exhaustion risk](alpha-upgrades.md#sampling-delivery-and-results).
+A `send_raw` formatted body is unsupported and rejects before mapping.
 
 The general shape does not include ICMP type/code, even when the operator
 allows ICMP tokens. Select those fields explicitly if needed. For a complete
@@ -229,9 +236,12 @@ This selection requires explicit `uptime_origin` and `encode_and_count`.
 All 39 required input keys still apply. Measured start/end values must be exact
 milliseconds relative to that stable origin, ordered, and no later than export
 time. An origin need not itself be aligned to Unix milliseconds. No time is
-inferred from receipt, export, or envelope timestamps; deployment must attest
-that original source templates and the receiver preserved measured values.
-An old time-free source template does not establish that provenance.
+inferred from receipt, export, or envelope timestamps. For the supplied
+receiver pipeline, deployment must attest that original source templates carried
+measured values and the receiver preserved them. Another producer that constructs
+the exact compatible representation must establish its own measured-time
+semantics and provenance. An old time-free source template does not establish
+that provenance.
 
 This is a **bounded-lifetime setup**: elapsed uptime cannot exceed
 4,294,967,295 ms (about 49.71 days), and exhaustion latches without wrapping.
@@ -316,9 +326,12 @@ canonical `0..MaxInt64` ns range or the uint32 Unix export-header range.
 IPFIX does not currently enforce end <= export time; deployments must ensure
 that prerequisite. Receipt time and log-envelope timestamps are never fallbacks.
 
-The source deployment must attest that its original templates carried measured
-times and that the receiver preserved them into canonical attributes. The
-exporter only re-encodes those attributes; the profile cannot verify provenance.
+For the supplied receiver pipeline, the source deployment must attest that its
+original templates carried measured times and that the receiver preserved them
+into canonical attributes. Another producer may construct the exact compatible
+representation without literal Contrib origin or receiver scope identity, but
+it must establish its own measured-time semantics and provenance. The exporter
+only re-encodes the canonical attributes; the profile cannot verify provenance.
 Keep original device identity in upstream provenance and isolate downstream
 exporter identities/destinations as needed; the outgoing observation domain and
 UDP source describe this exporter, not a recovered original device.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/netip"
 	"sort"
 	"strings"
@@ -55,11 +56,37 @@ func localMetrics(t *testing.T, reader *sdkmetric.ManualReader) map[string]int64
 			if !strings.HasPrefix(m.Name, prefix) {
 				continue
 			}
-			sum, ok := m.Data.(metricdata.Sum[int64])
-			if !ok || !sum.IsMonotonic {
-				t.Fatalf("non-counter %s", m.Name)
+			var points []metricdata.DataPoint[int64]
+			switch data := m.Data.(type) {
+			case metricdata.Sum[int64]:
+				if !data.IsMonotonic {
+					t.Fatalf("non-counter %s", m.Name)
+				}
+				points = data.DataPoints
+			case metricdata.Gauge[int64]:
+				if m.Name != "otelcol_netflow.exporter.uptime_exhausted" || m.Unit != "1" {
+					t.Fatalf("unexpected int gauge %s unit=%q", m.Name, m.Unit)
+				}
+				for _, dp := range data.DataPoints {
+					if dp.Value != 0 && dp.Value != 1 {
+						t.Fatalf("invalid exhausted gauge value=%d", dp.Value)
+					}
+				}
+				continue
+			case metricdata.Gauge[float64]:
+				if m.Name != "otelcol_netflow.exporter.uptime_remaining" || m.Unit != "s" {
+					t.Fatalf("unexpected float gauge %s unit=%q", m.Name, m.Unit)
+				}
+				for _, dp := range data.DataPoints {
+					if math.IsNaN(dp.Value) || math.IsInf(dp.Value, 0) || dp.Value < 0 {
+						t.Fatalf("invalid remaining gauge value=%v", dp.Value)
+					}
+				}
+				continue
+			default:
+				t.Fatalf("unknown local metric %s type=%T", m.Name, m.Data)
 			}
-			for _, dp := range sum.DataPoints {
+			for _, dp := range points {
 				var labels []string
 				for _, a := range dp.Attributes.ToSlice() {
 					labels = append(labels, string(a.Key)+"="+a.Value.AsString())
@@ -216,10 +243,14 @@ func TestRate(t *testing.T) {
 	}
 	after := localMetrics(t, reader)
 	acceptanceAssertLocalVocabulary(t, after)
-	// Four record outcomes + two data outcomes + two loss classes + 25 additions.
-	if len(before) != 33 || len(after) != 33 {
+	// The original 33 series plus this fixture's one rejected-record reason.
+	// The closed thirteen-reason vocabulary plus two lifetime gauges raises the
+	// overall bound to 48; this counter-only helper still sees 34 populated
+	// counter series in this fixture.
+	if len(before) != 34 || len(after) != 34 {
 		t.Fatalf("local series before=%d after=%d: %v", len(before), len(after), before)
 	}
+	requireMetric(t, after, "rejected_records", 2, "exporter=netflow/bounded", "rejection_reason=unsupported_body")
 	for key, value := range before {
 		if after[key] != value || strings.Contains(key, "secret") {
 			t.Fatalf("unbounded labels or counts: %s", key)

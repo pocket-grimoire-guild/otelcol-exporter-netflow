@@ -15,8 +15,10 @@ this exporter. The locally qualified user path is Linux/amd64 with Go
 `1.26.8`, OCB `v0.160.0`, Collector Core `v1.66.0` and beta Collector modules
 `v0.160.0`, including the pinned `netflowreceiver v0.160.0`. The
 [versioned consumer recipe](../../distribution/ocb/consumer/README.md) uses
-the explicitly unpublished `v0.1.0-alpha.1` example and must not be described
-as public installation evidence until that version is published.
+`v0.1.0-alpha.1` only as synthetic local staging for `check-consumer.sh`; the
+alpha is unpublished and must not be described as publicly fetchable. Existing
+public tag `v0.1.0` remains at the earlier public baseline, while the current
+source fixes are untagged.
 
 The only input schema is
 `contrib-netflowreceiver-v0.160.0`. It supplies 41 canonical flow keys: 39
@@ -42,16 +44,20 @@ named instance.
 | NetFlow v9 | `contrib-netflowreceiver-v0.160.0/netflow-v9-timed-v1` | Timed IPv4/IPv6 records are 51/75 bytes and require an explicit `uptime_origin`. The 32-bit millisecond uptime creates the same approximately 49.71-day lifetime and exhaustion is latched. `netflow-v9-core-v1` is the explicit time-free legacy layout (43/67-byte records). |
 | IPFIX | `contrib-netflowreceiver-v0.160.0/ipfix-general-v1` | Recommended general output uses Unix-millisecond IE 152/153 values, with 72/96-byte IPv4/IPv6 records. `ipfix-core-v1` is the explicit legacy NTP layout and retains its era-zero boundary in 2036. |
 
-The recommended timed profiles re-encode measured `flow.start` and `flow.end`;
-the deployment must attest that original source templates carried measured
-times and that the receiver preserved them. The exporter cannot detect receipt
-or export-time fallback. It does not use log timestamps or envelope metadata
-as a repair. IPFIX general time is floored to milliseconds after canonical
-ordering checks. Deployments must ensure IPFIX flow end is no later than
-export time; the exporter does not enforce that relation. V9 header seconds
-discard the fractional export second, which
-can shift reconstructed absolute times by less than one second. Header export
-seconds are also bounded by their protocol width.
+The recommended timed profiles re-encode measured `flow.start` and `flow.end`.
+Another producer may construct this exact receiver-compatible representation
+without being the literal Contrib receiver or carrying its scope identity, but
+acceptance cannot attest measured-time, sampling, or other field provenance.
+For the supplied receiver pipeline, the deployment must attest that original
+source templates carried measured times and that the receiver preserved them; another
+producer must establish its own field semantics and provenance. The exporter
+cannot detect receipt or export-time fallback. It does not use log timestamps
+or envelope metadata as a repair. IPFIX general time is floored to milliseconds
+after canonical ordering checks. Deployments must ensure IPFIX flow end is no
+later than export time; the exporter does not enforce that relation. V9 header
+seconds discard the fractional export second, which can shift reconstructed
+absolute times by less than one second. Header export seconds are also bounded
+by their protocol width.
 
 Select exactly one nonempty profile or one nonempty ordered `mapping.fields`
 list and set `mapping.loss_policy`. Built-in profiles require the explicit
@@ -68,9 +74,15 @@ conversion, IANA lookup, or reverse lookup; `unknown` cannot be configured.
 and `ipv6:6`. The v5 fixed profile requires IPv4 source, destination, and
 next-hop values. Other profiles apply their documented family and width gates.
 Missing required values, invalid addresses, protocol or family mismatches,
-unsupported required fields, and timestamp or width failures reject that
-record. Unsupported optional fields are omitted and counted as exporter loss.
-Values are not clamped or silently truncated.
+and timestamp or width failures reject that record. Unsupported or inapplicable
+selected arms fail configuration. The `encode_and_count` policy accepts only
+documented supported exact, lossy, or synthesized transformations; only selected
+lossy or synthesized transformations contribute exporter loss. A valid unselected
+field contributes no mapping or loss count merely because it is absent from
+output. See the [loss contract](default-profiles.md#loss-errors-and-diagnostics).
+The normalization-optional next-hop keys are not optional selected output slots:
+selecting one requires its value and descriptor family/width checks, and v5
+always selects an IPv4 next hop. Values are not clamped or silently truncated.
 
 ## Sampling, delivery, and results
 

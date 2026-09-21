@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata/metricdatatest"
 
@@ -19,6 +20,14 @@ func TestSetupTelemetry(t *testing.T) {
 	tb, err := metadata.NewTelemetryBuilder(testTel.NewTelemetrySettings())
 	require.NoError(t, err)
 	defer tb.Shutdown()
+	require.NoError(t, tb.RegisterNetflowExporterUptimeExhaustedCallback(func(_ context.Context, observer metric.Int64Observer) error {
+		observer.Observe(1)
+		return nil
+	}))
+	require.NoError(t, tb.RegisterNetflowExporterUptimeRemainingCallback(func(_ context.Context, observer metric.Float64Observer) error {
+		observer.Observe(1)
+		return nil
+	}))
 	tb.NetflowExporterAdmission.Add(context.Background(), 1)
 	tb.NetflowExporterBytes.Add(context.Background(), 1)
 	tb.NetflowExporterDataMessages.Add(context.Background(), 1)
@@ -27,6 +36,7 @@ func TestSetupTelemetry(t *testing.T) {
 	tb.NetflowExporterFailures.Add(context.Background(), 1)
 	tb.NetflowExporterLosses.Add(context.Background(), 1)
 	tb.NetflowExporterRecords.Add(context.Background(), 1)
+	tb.NetflowExporterRejectedRecords.Add(context.Background(), 1)
 	tb.NetflowExporterTemplates.Add(context.Background(), 1)
 	AssertEqualNetflowExporterAdmission(t, testTel,
 		[]metricdata.DataPoint[int64]{{Value: 1}},
@@ -52,8 +62,17 @@ func TestSetupTelemetry(t *testing.T) {
 	AssertEqualNetflowExporterRecords(t, testTel,
 		[]metricdata.DataPoint[int64]{{Value: 1}},
 		metricdatatest.IgnoreTimestamp())
+	AssertEqualNetflowExporterRejectedRecords(t, testTel,
+		[]metricdata.DataPoint[int64]{{Value: 1}},
+		metricdatatest.IgnoreTimestamp())
 	AssertEqualNetflowExporterTemplates(t, testTel,
 		[]metricdata.DataPoint[int64]{{Value: 1}},
+		metricdatatest.IgnoreTimestamp())
+	AssertEqualNetflowExporterUptimeExhausted(t, testTel,
+		[]metricdata.DataPoint[int64]{{Value: 1}},
+		metricdatatest.IgnoreTimestamp())
+	AssertEqualNetflowExporterUptimeRemaining(t, testTel,
+		[]metricdata.DataPoint[float64]{{Value: 1}},
 		metricdatatest.IgnoreTimestamp())
 
 	require.NoError(t, testTel.Shutdown(context.Background()))

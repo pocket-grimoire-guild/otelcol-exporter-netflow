@@ -277,3 +277,114 @@ func TestSourceLedgerPendingLimitAndWideOrdinalStorage(t *testing.T) {
 		t.Fatal("wide uncovered ordinal reported as covered")
 	}
 }
+
+func TestSourceLedgerRejectionReasonsUseCheckedTransitions(t *testing.T) {
+	pending := newSourceLedger()
+	if err := pending.addSource(0, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.beginPacket(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.addPending(0); err != nil {
+		t.Fatal(err)
+	}
+	before := ledgerSnapshot(&pending)
+	if err := pending.invalidate(0, RejectionInvalidValue); !errors.Is(err, ErrLedgerOrdinal) {
+		t.Fatalf("pending invalidation = %v, want ordinal error", err)
+	}
+	assertLedgerUnchanged(t, before, &pending)
+	if _, err := pending.resolvePacket(1, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := pending.Classification(0); got != SourceConfirmed {
+		t.Fatalf("pending resolution class = %v, want confirmed", got)
+	}
+
+	ledger := newSourceLedger()
+	if err := ledger.addSourceReason(0, true, RejectionMissingField); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.invalidate(0, RejectionMissingField); err != nil {
+		t.Fatal(err)
+	}
+	want := RejectionCounts{}
+	want[RejectionMissingField] = 1
+	if got := ledger.RejectionCounts(); got != want {
+		t.Fatalf("initial transition reasons = %v, want %v", got, want)
+	}
+	before = ledgerSnapshot(&ledger)
+	if err := ledger.invalidate(0, RejectionInvalidValue); !errors.Is(err, ErrLedgerOrdinal) {
+		t.Fatalf("duplicate invalidation = %v, want ordinal error", err)
+	}
+	assertLedgerUnchanged(t, before, &ledger)
+	if got := ledger.RejectionCounts(); got != want {
+		t.Fatalf("duplicate transition reasons = %v, want %v", got, want)
+	}
+	before = ledgerSnapshot(&ledger)
+	if err := ledger.addSourceReason(0, false, RejectionInvalidValue); !errors.Is(err, ErrLedgerOrdinal) {
+		t.Fatalf("duplicate source = %v, want ordinal error", err)
+	}
+	assertLedgerUnchanged(t, before, &ledger)
+
+	for _, test := range []struct {
+		name  string
+		class SourceClass
+	}{
+		{"confirmed", SourceConfirmed},
+		{"ambiguous", SourceAmbiguous},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := newSourceLedger()
+			if err := candidate.addSource(0, true); err != nil {
+				t.Fatal(err)
+			}
+			candidate.setStoredClass(0, test.class)
+			candidate.valid = 1
+			before := ledgerSnapshot(&candidate)
+			if err := candidate.invalidate(0, RejectionInvalidValue); !errors.Is(err, ErrLedgerOrdinal) {
+				t.Fatalf("%s invalidation = %v, want ordinal error", test.name, err)
+			}
+			assertLedgerUnchanged(t, before, &candidate)
+		})
+	}
+	aborted := newSourceLedger()
+	if err := aborted.addSource(0, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := aborted.beginPacket(); err != nil {
+		t.Fatal(err)
+	}
+	if err := aborted.abortPacket(); err != nil {
+		t.Fatal(err)
+	}
+	if err := aborted.invalidate(0, RejectionInvalidValue); err != nil {
+		t.Fatalf("aborted unsent invalidation = %v", err)
+	}
+	ambiguous := newSourceLedger()
+	if err := ambiguous.addSource(0, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := ambiguous.beginPacket(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ambiguous.addPending(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ambiguous.resolvePacket(0, 1, errors.New("partial")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ambiguous.addSource(1, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := ambiguous.invalidate(1, RejectionInvalidValue); err != nil {
+		t.Fatalf("ambiguous suffix invalidation = %v", err)
+	}
+	if err := ledger.invalidate(99, RejectionInvalidValue); !errors.Is(err, ErrLedgerOrdinal) {
+		t.Fatalf("uncovered invalidation = %v, want ordinal error", err)
+	}
+	var nilLedger *sourceLedger
+	if err := nilLedger.invalidate(0, RejectionInvalidValue); !errors.Is(err, ErrLedgerOrdinal) {
+		t.Fatalf("nil invalidation = %v, want ordinal error", err)
+	}
+}

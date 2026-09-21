@@ -149,6 +149,22 @@ func AssertEqualNetflowExporterRecords(t *testing.T, tt *componenttest.Telemetry
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
 
+func AssertEqualNetflowExporterRejectedRecords(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_netflow.exporter.rejected_records",
+		Description: "Rejected source records by fixed first rejection reason. These also count as records with invalid outcome. [Alpha]",
+		Unit:        "{record}",
+		Data: metricdata.Sum[int64]{
+			Temporality: metricdata.CumulativeTemporality,
+			IsMonotonic: true,
+			DataPoints:  dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_netflow.exporter.rejected_records")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
 func AssertEqualNetflowExporterTemplates(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
 		Name:        "otelcol_netflow.exporter.templates",
@@ -161,6 +177,34 @@ func AssertEqualNetflowExporterTemplates(t *testing.T, tt *componenttest.Telemet
 		},
 	}
 	got, err := tt.GetMetric("otelcol_netflow.exporter.templates")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
+func AssertEqualNetflowExporterUptimeExhausted(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_netflow.exporter.uptime_exhausted",
+		Description: "Whether the published exporter epoch has latched its elapsed-uptime exhaustion state. [Alpha]",
+		Unit:        "1",
+		Data: metricdata.Gauge[int64]{
+			DataPoints: dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_netflow.exporter.uptime_exhausted")
+	require.NoError(t, err)
+	metricdatatest.AssertEqual(t, want, got, opts...)
+}
+
+func AssertEqualNetflowExporterUptimeRemaining(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[float64], opts ...metricdatatest.Option) {
+	want := metricdata.Metrics{
+		Name:        "otelcol_netflow.exporter.uptime_remaining",
+		Description: "Remaining origin-relative millisecond slots before the first elapsed-uptime overflow, expressed in seconds. [Alpha]",
+		Unit:        "s",
+		Data: metricdata.Gauge[float64]{
+			DataPoints: dps,
+		},
+	}
+	got, err := tt.GetMetric("otelcol_netflow.exporter.uptime_remaining")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }

@@ -18,7 +18,10 @@ scenarios:
       - otelcol_netflow.exporter.failures
       - otelcol_netflow.exporter.losses
       - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.rejected_records
       - otelcol_netflow.exporter.templates
+      - otelcol_netflow.exporter.uptime_remaining
+      - otelcol_netflow.exporter.uptime_exhausted
 
   type_mismatch_control:
     run: python3 replay.py --mode type_mismatch
@@ -33,7 +36,10 @@ scenarios:
       - otelcol_netflow.exporter.failures
       - otelcol_netflow.exporter.losses
       - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.rejected_records
       - otelcol_netflow.exporter.templates
+      - otelcol_netflow.exporter.uptime_remaining
+      - otelcol_netflow.exporter.uptime_exhausted
 
   missing_required_outcome_control:
     run: python3 replay.py --mode missing_required_outcome
@@ -48,4 +54,7 @@ scenarios:
       - otelcol_netflow.exporter.failures
       - otelcol_netflow.exporter.losses
       - otelcol_netflow.exporter.records
+      - otelcol_netflow.exporter.rejected_records
       - otelcol_netflow.exporter.templates
+      - otelcol_netflow.exporter.uptime_remaining
+      - otelcol_netflow.exporter.uptime_exhausted

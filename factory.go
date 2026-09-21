@@ -27,6 +27,9 @@ func createLogs(ctx context.Context, set exporter.Settings, cfg component.Config
 	return newLogsExporter(ctx, set, c, transport.NewClock(), transport.NewDialer("udp", netip.AddrPort{}).Dial)
 }
 func newLogsExporter(ctx context.Context, set exporter.Settings, c *Config, clock transport.Clock, dial transport.NumericDial) (*logsExporter, error) {
+	return newLogsExporterWithTimer(ctx, set, c, clock, dial, nil)
+}
+func newLogsExporterWithTimer(ctx context.Context, set exporter.Settings, c *Config, clock transport.Clock, dial transport.NumericDial, newTimer transport.TimerFactory) (*logsExporter, error) {
 	if set.Logger == nil || set.MeterProvider == nil || set.TracerProvider == nil {
 		return nil, configError()
 	}
@@ -35,7 +38,7 @@ func newLogsExporter(ctx context.Context, set exporter.Settings, c *Config, cloc
 		return nil, err
 	}
 	tel := telemetry{builder: builder, instance: attribute.String("exporter", set.ID.String())}
-	r, err := c.newRuntimeWithObserver(clock, dial, tel.observe)
+	r, err := c.newRuntimeWithObserverAndTimer(clock, dial, tel.observe, newTimer)
 	if err != nil {
 		builder.Shutdown()
 		return nil, err
@@ -53,9 +56,25 @@ func newLogsExporter(ctx context.Context, set exporter.Settings, c *Config, cloc
 		exporterhelper.WithTimeout(exporterhelper.TimeoutConfig{Timeout: 0}),
 	)
 	if err != nil {
+		_ = r.Shutdown(context.Background())
 		builder.Shutdown()
 		return nil, err
 	}
 	e.helper = helper
+	registration, err := tel.registerLifetime(metadata.Meter(set.TelemetrySettings), r)
+	if err != nil {
+		// Some Meter implementations can return a usable partial registration
+		// alongside an error. Remove it before releasing the constructed helper,
+		// runtime and generated instruments, and keep provider details private.
+		if registration != nil {
+			_ = registration.Unregister()
+		}
+		_ = helper.Shutdown(context.Background())
+		_ = r.Shutdown(context.Background())
+		builder.Shutdown()
+		return nil, errLifetimeTelemetryInit
+	}
+	tel.lifetimeReg = registration
+	e.telemetry = tel
 	return e, nil
 }

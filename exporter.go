@@ -33,6 +33,11 @@ func (e *logsExporter) Shutdown(ctx context.Context) error {
 	err := e.runtime.Shutdown(ctx)
 	e.shutdownOnce.Do(func() {
 		e.shutdownErr = err
+		if e.telemetry.lifetimeReg != nil {
+			if unregisterErr := e.telemetry.lifetimeReg.Unregister(); unregisterErr != nil && e.shutdownErr == nil {
+				e.shutdownErr = errors.New("netflow: shutdown failed")
+			}
+		}
 		if e.telemetry.builder != nil {
 			defer e.telemetry.builder.Shutdown()
 		}

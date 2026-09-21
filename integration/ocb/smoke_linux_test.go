@@ -45,6 +45,11 @@ func TestCollectorSmoke(t *testing.T) {
 		t.Logf("retained integration artifacts: %s", dir)
 	}
 	config := legacyMatrixConfig(t)
+	// This is a test-owned socket, never a Collector metrics endpoint. With
+	// level none, the retained reader must be ignored even while its port is
+	// occupied. Hold the reservation until the Collector has fully stopped.
+	metrics := reserveMetricsPort(t)
+	metricsAddress := metrics.Addr().String()
 	if os.Getenv("NETFLOW_OCB_NETNS") != "" {
 		config = strings.ReplaceAll(config, "hostname: 127.0.0.1", "hostname: 198.18.0.2")
 	}
@@ -115,7 +120,7 @@ func TestCollectorSmoke(t *testing.T) {
 	config = replaceOnce(t, config, "service:\n", stanza+"service:\n")
 	config = replaceOnce(t, config, "exporters: [netflow/ipfix]", "exporters: [netflow/ipfix, netflow/rejected]")
 	// Retain the effective configuration, including endpoint and origin values.
-	for _, key := range []string{"NETFLOW_V5_PORT", "NETFLOW_V9_PORT", "NETFLOW_IPFIX_PORT", "NETFLOW_V5_ENDPOINT", "NETFLOW_V9_ENDPOINT", "NETFLOW_IPFIX_ENDPOINT", "NETFLOW_REJECTED_ENDPOINT", "NETFLOW_V5_ORIGIN", "NETFLOW_V9_ORIGIN"} {
+	for _, key := range []string{"NETFLOW_V5_PORT", "NETFLOW_V9_PORT", "NETFLOW_IPFIX_PORT", "NETFLOW_V5_ENDPOINT", "NETFLOW_V9_ENDPOINT", "NETFLOW_IPFIX_ENDPOINT", "NETFLOW_REJECTED_ENDPOINT", "NETFLOW_V5_ORIGIN", "NETFLOW_V9_ORIGIN", "NETFLOW_METRICS_PORT"} {
 		config = strings.ReplaceAll(config, "${env:"+key+"}", os.Getenv(key))
 	}
 	must(t, os.WriteFile(configPath, []byte(config), 0600))
@@ -228,6 +233,12 @@ func TestCollectorSmoke(t *testing.T) {
 		t.Fatal("named instances share a socket")
 	}
 	stopCollector(t, p)
+	if !strings.Contains(p.log.String(), "Internal metrics telemetry disabled") {
+		t.Fatal("smoke did not report deliberate disabled metrics")
+	}
+	must(t, metrics.Close())
+	assertMetricsPortReleased(t, metricsAddress)
+	t.Log("disabled provider ignored retained reader while the test-owned metrics port stayed occupied through shutdown")
 	for _, out := range outputs {
 		assertQuiet(t, out)
 	}
@@ -607,6 +618,11 @@ func must(t *testing.T, err error) {
 func legacyMatrixConfig(t *testing.T) string {
 	t.Helper()
 	config := string(readFile(t, "../../distribution/ocb/config.yaml"))
+	// Only the legacy smoke matrix disables telemetry; keep the operator's
+	// reader stanza so the occupied-port control exercises the no-op provider.
+	// transportConfig extracts only component stanzas and supplies its own
+	// explicit disabled/no-reader service, without a metrics env requirement.
+	config = replaceOnce(t, config, "      level: normal\n", "      level: none\n")
 	config = replaceOnce(t, config, "/netflow-v9-timed-v1", "/netflow-v9-core-v1")
 	config = replaceOnce(t, config, "/ipfix-general-v1", "/ipfix-core-v1")
 	config = strings.ReplaceAll(config, "    templates: {id_base: 300}\n", "    templates: {id_base: 256}\n")

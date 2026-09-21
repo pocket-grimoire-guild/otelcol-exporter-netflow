@@ -1,5 +1,6 @@
-# Versioned external-consumer manifest. The alpha version is intentionally
-# unpublished; publish the reviewed source and tag before using a public proxy.
+# Synthetic local staging manifest for check-consumer.sh. The alpha pin is
+# unpublished and cannot be fetched publicly. Use the checkout build for current
+# source fixes; the existing v0.1.0 tag contains the older public baseline.
 dist:
   module: github.com/pocket-grimoire-guild/otelcol-exporter-netflow/distribution/consumer
   name: otel-netflow-collector

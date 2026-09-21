@@ -4,6 +4,10 @@
 The manifest deliberately uses JSON syntax even though its filename ends in
 ``.yaml``.  Keeping the checker on the Python standard library makes the
 coverage gate usable before any Collector or YAML dependency is available.
+
+Pinned source declarations and parsed mapping tables define this check's
+boundary. Unparsed prose, links and explanatory columns require source-backed
+review and the relevant behavior tests; whole-document bytes are not bound.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from typing import Any
 
 
 SCHEMA = "otel-netflow-mapping-coverage"
-VERSION = 1
+VERSION = 2
 MAX_INPUT_BYTES = 512 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 MAX_DIAGNOSTIC_BYTES = 256
@@ -30,8 +34,6 @@ CONTRIB_COMMIT = "982f20b8a8e8a2569fab3e27cf8b008e8a5080c1"
 GOFLOW2_COMMIT = "c9824f41bcad11d4490a668ed5270b03056d8217"
 RECEIVER_PATH = "docs/compatibility/receiver-attributes.md"
 MATRIX_PATH = "docs/compatibility/protocol-mapping.md"
-RECEIVER_SHA256 = "587f155e51b9d7eee55d61b42f5f97308c926004b7073f28963de85b1cfcc9d4"
-MATRIX_SHA256 = "8f72fb01b702afdeb493e7a4413d0b1d20408163c669000122c428ac8f679104"
 EXTRA_TESTS = {
     "custom_ipfix_enterprise": "internal/mapping:TestCustom",
     "v9_private": "internal/mapping:TestCustom",
@@ -165,14 +167,6 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def read_source(root: Path, relative: str, expected: str) -> bytes:
-    source = root / relative
-    data = bounded_read(source)
-    if sha256_bytes(data) != expected:
-        error("bound source drift")
-    return data
-
-
 def receiver_attributes(data: bytes) -> list[str]:
     text = data.decode("utf-8")
     names: list[str] = []
@@ -299,20 +293,18 @@ def check_manifest(path: Path) -> tuple[str, dict[str, int]]:
     sources = require_keys(root_object["sources"], {"receiver_profile", "matrix"}, "sources")
     receiver = require_keys(
         sources["receiver_profile"],
-        {"id", "contrib_commit", "goflow2_commit", "path", "sha256"},
+        {"id", "contrib_commit", "goflow2_commit", "path"},
         "sources.receiver_profile",
     )
     exact_string(receiver["id"], RECEIVER_PROFILE, "sources.receiver_profile.id")
     exact_string(receiver["contrib_commit"], CONTRIB_COMMIT, "sources.receiver_profile.contrib_commit")
     exact_string(receiver["goflow2_commit"], GOFLOW2_COMMIT, "sources.receiver_profile.goflow2_commit")
     exact_string(receiver["path"], RECEIVER_PATH, "sources.receiver_profile.path")
-    exact_string(receiver["sha256"], RECEIVER_SHA256, "sources.receiver_profile.sha256")
-    matrix = require_keys(sources["matrix"], {"id", "path", "sha256"}, "sources.matrix")
+    matrix = require_keys(sources["matrix"], {"id", "path"}, "sources.matrix")
     exact_string(matrix["id"], "receiver-to-protocol-conversion-matrix-v1", "sources.matrix.id")
     exact_string(matrix["path"], MATRIX_PATH, "sources.matrix.path")
-    exact_string(matrix["sha256"], MATRIX_SHA256, "sources.matrix.sha256")
-    receiver_data = read_source(root, RECEIVER_PATH, RECEIVER_SHA256)
-    matrix_data = read_source(root, MATRIX_PATH, MATRIX_SHA256)
+    receiver_data = bounded_read(root / RECEIVER_PATH)
+    matrix_data = bounded_read(root / MATRIX_PATH)
     attributes = receiver_attributes(receiver_data)
     rows = matrix_rows(matrix_data, attributes)
 

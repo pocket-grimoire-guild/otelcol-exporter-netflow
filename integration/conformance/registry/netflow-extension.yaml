@@ -23,6 +23,10 @@ groups:
         type: string
         stability: development
         brief: Local admission or operation reason.
+      - id: rejection_reason
+        type: string
+        stability: development
+        brief: Fixed first record rejection reason, separate from admission and operation failures.
       - id: loss_class
         type: string
         stability: development
@@ -136,6 +140,19 @@ groups:
       - ref: outcome
         requirement_level: required
 
+  - id: metric.netflow.exporter.rejected_records
+    type: metric
+    metric_name: otelcol_netflow.exporter.rejected_records
+    stability: development
+    brief: Rejected source records by fixed first rejection reason.
+    instrument: counter
+    unit: "{record}"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+      - ref: rejection_reason
+        requirement_level: required
+
   - id: metric.netflow.exporter.templates
     type: metric
     metric_name: otelcol_netflow.exporter.templates
@@ -149,6 +166,28 @@ groups:
       - ref: message_kind
         requirement_level: required
       - ref: outcome
+        requirement_level: required
+
+  - id: metric.netflow.exporter.uptime_remaining
+    type: metric
+    metric_name: otelcol_netflow.exporter.uptime_remaining
+    stability: development
+    brief: Remaining origin-relative millisecond slots before uptime overflow, expressed in seconds.
+    instrument: gauge
+    unit: "s"
+    attributes:
+      - ref: exporter
+        requirement_level: required
+
+  - id: metric.netflow.exporter.uptime_exhausted
+    type: metric
+    metric_name: otelcol_netflow.exporter.uptime_exhausted
+    stability: development
+    brief: Actual terminal exhaustion latch of the published uptime epoch.
+    instrument: gauge
+    unit: "1"
+    attributes:
+      - ref: exporter
         requirement_level: required
 
   - id: metric.collector.exporter.in_flight_requests

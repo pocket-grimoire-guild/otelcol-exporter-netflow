@@ -113,6 +113,20 @@ Flow records classified by local UDP handoff result.
 | ---- | ----------- | ------ | ------------------- |
 | outcome | Fixed local operation outcome. | Str: ``confirmed``, ``invalid``, ``ambiguous``, ``unsent``, ``succeeded``, ``failed`` | - |
 
+### otelcol_netflow.exporter.rejected_records
+
+Rejected source records by fixed first rejection reason. These also count as records with invalid outcome.
+
+| Unit | Metric Type | Value Type | Monotonic | Stability |
+| ---- | ----------- | ---------- | --------- | --------- |
+| {record} | Sum | Int | true | Alpha |
+
+#### Attributes
+
+| Name | Description | Values | Semantic Convention |
+| ---- | ----------- | ------ | ------------------- |
+| rejection_reason | Fixed first reason a source record was rejected; distinct from admission and operation failures. | Str: ``unsupported_body``, ``missing_field``, ``invalid_type``, ``invalid_value``, ``map_miss``, ``family_mismatch``, ``protocol_mismatch``, ``time_invalid``, ``custom_unavailable``, ``custom_invalid``, ``record_too_large``, ``record_invalid``, ``other`` | - |
+
 ### otelcol_netflow.exporter.templates
 
 Template datagrams by bootstrap or refresh handoff result, including unpublished candidate writes.
@@ -127,3 +141,19 @@ Template datagrams by bootstrap or refresh handoff result, including unpublished
 | ---- | ----------- | ------ | ------------------- |
 | message_kind | Fixed datagram purpose. | Str: ``data``, ``bootstrap``, ``refresh`` | - |
 | outcome | Fixed local operation outcome. | Str: ``confirmed``, ``invalid``, ``ambiguous``, ``unsent``, ``succeeded``, ``failed`` | - |
+
+### otelcol_netflow.exporter.uptime_exhausted
+
+Whether the published exporter epoch has latched its elapsed-uptime exhaustion state.
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| 1 | Gauge | Int | Alpha |
+
+### otelcol_netflow.exporter.uptime_remaining
+
+Remaining origin-relative millisecond slots before the first elapsed-uptime overflow, expressed in seconds.
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| s | Gauge | Double | Alpha |

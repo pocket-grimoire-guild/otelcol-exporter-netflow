@@ -1,18 +1,16 @@
 {
   "schema": "otel-netflow-mapping-coverage",
-  "version": 1,
+  "version": 2,
   "sources": {
     "receiver_profile": {
       "id": "contrib-netflowreceiver-v0.160.0",
       "contrib_commit": "982f20b8a8e8a2569fab3e27cf8b008e8a5080c1",
       "goflow2_commit": "c9824f41bcad11d4490a668ed5270b03056d8217",
-      "path": "docs/compatibility/receiver-attributes.md",
-      "sha256": "587f155e51b9d7eee55d61b42f5f97308c926004b7073f28963de85b1cfcc9d4"
+      "path": "docs/compatibility/receiver-attributes.md"
     },
     "matrix": {
       "id": "receiver-to-protocol-conversion-matrix-v1",
-      "path": "docs/compatibility/protocol-mapping.md",
-      "sha256": "8f72fb01b702afdeb493e7a4413d0b1d20408163c669000122c428ac8f679104"
+      "path": "docs/compatibility/protocol-mapping.md"
     }
   },
   "canonical": {

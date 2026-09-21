@@ -332,9 +332,12 @@ pdata, normalized records, or raw errors. Collector subset copying follows the
 [admission and ownership contract](collector-component.md#admission-ownership-and-results).
 
 The initial profile has no queue, persistence, batching, or automatic retry.
-Admission allows one whole request per instance and zero internal waiters; a
-concurrent request receives the fixed transient `busy` result without retaining
-pdata.  Invalid records are fixed-reason counted and dropped while valid
+Admission allows one whole request per instance and no waiting queue for
+concurrent requests; a second request receives the fixed transient `busy` result
+without retaining pdata. The admitted request may wait cancelably for internal
+refresh or endpoint publication, as described in the
+[admission contract](collector-component.md#admission-ownership-and-results).
+Invalid records are fixed-reason counted and dropped while valid
 siblings continue.  If a transient write follows a confirmed prefix, the
 component copies only the ambiguous datagram and unsent valid suffix into a
 bounded `consumererror.NewLogs` subset; confirmed and invalid records are

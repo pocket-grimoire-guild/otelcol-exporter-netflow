@@ -482,9 +482,11 @@ func validateValueForFamily(v Value, family Family) error {
 
 func validateCanonicalValueForFamily(field FieldValue, family Family) error {
 	// The sampler identifies the receiving transport's peer, not an address
-	// inside the measured flow. IPv6 flows routinely arrive over IPv4 UDP (and
-	// vice versa). Keep generic value validation without imposing flow family.
-	if field.Field == FieldFlowSamplerAddress {
+	// inside the measured flow, and next hops are independent routing values.
+	// IPv6 flows routinely arrive over IPv4 UDP (and vice versa), and a flow may
+	// use a next hop from either family. Keep generic value validation without
+	// imposing flow family on those fields.
+	if field.Field == FieldFlowSamplerAddress || field.Field == FieldFlowNextHop || field.Field == FieldFlowBGPNextHop {
 		return validateValue(field.Value)
 	}
 	return validateValueForFamily(field.Value, family)

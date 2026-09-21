@@ -512,7 +512,11 @@ func validateCanonicalAddressFamilies(record wire.NormalizedRecord) error {
 			return ErrFamilyMismatch
 		}
 		address := value.IP()
-		if (family == wire.FamilyIPv4 && !address.Is4()) || (family == wire.FamilyIPv6 && (!address.Is6() || address.Is4())) {
+		// Source and destination describe the measured flow and must share its
+		// family. Optional next hops are independent routing values; retain the
+		// IP-kind check above so malformed typed values cannot bypass mapping.
+		if (field == wire.FieldSourceAddress || field == wire.FieldDestinationAddress) &&
+			((family == wire.FamilyIPv4 && !address.Is4()) || (family == wire.FamilyIPv6 && (!address.Is6() || address.Is4()))) {
 			return ErrFamilyMismatch
 		}
 	}

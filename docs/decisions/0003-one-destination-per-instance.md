@@ -33,9 +33,11 @@ the authority for bounds and lifecycle ordering.
    admission gate, and shutdown state.
 2. Use a small project-owned `exporter.Logs` wrapper around synchronous
    `exporterhelper.NewLogs`. The wrapper performs an atomic closing/admission
-   check, nonblockingly acquires one whole-request slot, and has zero internal
-   waiters. A busy caller receives fixed transient `busy`; its pdata is not
-   retained. The winner runs iterative bounded preflight before helper entry,
+   check, nonblockingly acquires one whole-request slot, and has no waiting
+   queue for concurrent callers. A busy caller receives fixed transient `busy`;
+   its pdata is not retained. The admitted request can wait cancelably for
+   internal maintenance as specified in the current
+   [admission contract](../design-docs/collector-component.md#admission-ownership-and-results). The winner runs iterative bounded preflight before helper entry,
    normalization, or proportional allocation. The pusher reads pdata
    synchronously and reports `consumer.Capabilities{MutatesData:false}`.
 3. Queueing, persistence, batching/partitioning, `wait_for_result`, and automatic
@@ -94,7 +96,7 @@ duplicated here; [ADR 0002](0002-focused-wire-encoders.md) owns that boundary.
 ## Consequences
 
 The component has a small, explicit backpressure surface: one admitted request
-per instance and no waiting requests. Pipeline callers may see `busy`, and
+per instance and no queue for concurrent requests. Pipeline callers may see `busy`, and
 multiple named instances can succeed or fail independently. There is no local
 durable buffering or automatic retry; an upstream replay can duplicate a packet
 because UDP has no acknowledgement. The failed subset is bounded and describes

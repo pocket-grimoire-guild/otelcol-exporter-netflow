@@ -27,7 +27,7 @@ func TestSamplerAddressFamily(t *testing.T) {
 			if !ok || got.IP().String() != tc.peer || record.Family() != tc.family {
 				t.Fatal("sampler changed value or flow family")
 			}
-			for _, field := range []CanonicalField{FieldSourceAddress, FieldDestinationAddress, FieldFlowNextHop, FieldFlowBGPNextHop} {
+			for _, field := range []CanonicalField{FieldSourceAddress, FieldDestinationAddress} {
 				if _, err := NewRecord(tc.family, []FieldValue{{Field: field, Value: value}}); err == nil {
 					t.Fatalf("mismatched flow address %v accepted", field)
 				}
@@ -35,6 +35,15 @@ func TestSamplerAddressFamily(t *testing.T) {
 				forged.values[0].Field = field
 				if forged.Validate() == nil {
 					t.Fatalf("Validate accepted mismatched flow address %v", field)
+				}
+			}
+			for _, field := range []CanonicalField{FieldFlowNextHop, FieldFlowBGPNextHop} {
+				hop, err := NewRecord(tc.family, []FieldValue{{Field: field, Value: value}})
+				if err != nil {
+					t.Fatalf("independent next-hop address %v rejected: %v", field, err)
+				}
+				if err := hop.Validate(); err != nil {
+					t.Fatalf("Validate rejected independent next-hop address %v: %v", field, err)
 				}
 			}
 			if _, err := NewWireRecord(tc.family, []Value{value}); err == nil {

@@ -10,10 +10,11 @@ executable or part of a stock Contrib distribution.
 The component identity is `netflow`, the Go package is `netflowexporter`, and
 the input schema is the versioned
 `contrib-netflowreceiver-v0.160.0` profile. The source is licensed under
-[Apache-2.0](LICENSE). `v0.1.0-alpha.1` is planned but unpublished: the
-checkout can be built and tested locally, while a versioned consumer must wait
-for that tag to be published. No maintained binary or container image is
-offered.
+[Apache-2.0](LICENSE). Existing public tag `v0.1.0` points at the earlier
+public baseline; the current source fixes are untagged. `v0.1.0-alpha.1` is a
+synthetic local staging version used only by `check-consumer.sh`, is unpublished
+and cannot be fetched from a public module proxy. No maintained binary or
+container image is offered.
 
 ## Supported build
 
@@ -72,6 +73,12 @@ The [MVP acceptance record](docs/mvp-acceptance.md) and
 describe demonstrated behavior and remaining limits. They do not establish a
 production SLA or qualify arbitrary platforms, Collector versions, or
 downstream appliances.
+
+The operator and versioned-consumer examples enable the local pull reader with
+`NETFLOW_METRICS_PORT`; keep that numeric TCP port on loopback and distinct for
+each Collector process. The reader reports local outcome and lifetime
+observations, while a successful UDP write still proves only local kernel
+handoff.
 
 ## Documentation
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import re
 import signal
@@ -50,9 +51,37 @@ EXPECTED_METRICS = {
     "otelcol_netflow.exporter.failures",
     "otelcol_netflow.exporter.losses",
     "otelcol_netflow.exporter.records",
+    "otelcol_netflow.exporter.rejected_records",
     "otelcol_netflow.exporter.templates",
+    "otelcol_netflow.exporter.uptime_remaining",
+    "otelcol_netflow.exporter.uptime_exhausted",
 }
 MUTATION_METRIC = "otelcol_netflow.exporter.records"
+LIFETIME_TYPES = {
+    "otelcol_netflow.exporter.uptime_remaining": "gauge[float64]",
+    "otelcol_netflow.exporter.uptime_exhausted": "gauge[int64]",
+}
+REJECTION_METRIC = "otelcol_netflow.exporter.rejected_records"
+REJECTION_REASONS = {
+    "unsupported_body", "missing_field", "invalid_type", "invalid_value",
+    "map_miss", "family_mismatch", "protocol_mismatch", "time_invalid",
+    "custom_unavailable", "custom_invalid", "record_too_large",
+    "record_invalid", "other",
+}
+EXPECTED_UNITS = {
+    "otelcol_exporter_in_flight_requests": "{request}",
+    "otelcol_exporter_sent_log_records": "{record}",
+    **{
+        f"otelcol_netflow.exporter.{name}": unit
+        for name, unit in {
+            "admission": "{request}", "bytes": "By", "data_messages": "{message}",
+            "dns": "{lookup}", "endpoint_epochs": "{epoch}", "failures": "{event}",
+            "losses": "{event}", "records": "{record}",
+            "rejected_records": "{record}", "templates": "{message}",
+            "uptime_remaining": "s", "uptime_exhausted": "1",
+        }.items()
+    },
+}
 
 
 class ReplayError(RuntimeError):
@@ -242,6 +271,8 @@ def validate_snapshot(snapshot: dict[str, Any]) -> None:
         raise ReplayError(f"SDK signal set mismatch; missing={missing} extra={extra}")
     if len(names) != len(set(names)):
         raise ReplayError("SDK metric summary contains duplicate metric names")
+    for metric in metrics:
+        validate_metric(metric)
     flat_by_name = {metric["name"]: metric for metric in metrics}
     nested: list[dict[str, Any]] = []
     for entry in scopes:
@@ -252,7 +283,7 @@ def validate_snapshot(snapshot: dict[str, Any]) -> None:
         nested.extend(scoped_metrics)
     nested_names = [metric.get("name") for metric in nested]
     if len(nested_names) != len(EXPECTED_METRICS) or set(nested_names) != EXPECTED_METRICS:
-        raise ReplayError("SDK nested scope metrics do not cover all 11 signals")
+        raise ReplayError("SDK nested scope metrics do not cover all 14 signals")
     if any(flat_by_name.get(metric.get("name")) != metric for metric in nested):
         raise ReplayError("SDK nested scope metrics differ from the flat summary")
     for metric in nested:
@@ -322,22 +353,61 @@ def validate_metric(metric: Any) -> None:
             raise ReplayError(f"SDK metric is missing {key}")
     if not isinstance(metric["name"], str) or not metric["name"]:
         raise ReplayError("SDK metric name is empty")
-    if metric["data_type"] not in {"sum[int64]", "gauge[int64]"}:
-        raise ReplayError(f"unsupported SDK metric type {metric['data_type']!r}")
+    name = metric["name"]
+    lifetime = name in LIFETIME_TYPES
     if not isinstance(metric["unit"], str) or not isinstance(metric["description"], str):
-        raise ReplayError(f"SDK metric {metric['name']} has invalid metadata")
-    if not isinstance(metric.get("monotonic"), bool):
-        raise ReplayError(f"SDK metric {metric['name']} has invalid monotonicity")
-    if metric["data_type"] == "sum[int64]" and metric.get("temporality") != "CumulativeTemporality":
-        raise ReplayError(f"SDK metric {metric['name']} is not cumulative")
+        raise ReplayError(f"SDK metric {name} has invalid metadata")
+    if (
+        name not in EXPECTED_UNITS
+        or metric["unit"] != EXPECTED_UNITS[name]
+        or metric["data_type"] != LIFETIME_TYPES.get(name, "sum[int64]")
+    ):
+        raise ReplayError(f"SDK metric {name} differs from its instrument contract")
+    if lifetime:
+        if "monotonic" in metric or "temporality" in metric:
+            raise ReplayError(f"SDK gauge {name} has sum metadata")
+    else:
+        expected_monotonic = name != "otelcol_exporter_in_flight_requests"
+        if type(metric.get("monotonic")) is not bool or metric["monotonic"] != expected_monotonic:
+            raise ReplayError(f"SDK metric {name} has invalid monotonicity")
+        if metric.get("temporality") != "CumulativeTemporality":
+            raise ReplayError(f"SDK metric {name} is not cumulative")
     points = metric["points"]
     if not isinstance(points, list) or not points:
         raise ReplayError(f"SDK metric {metric['name']} has no data points")
+    seen_lifetime_exporters: set[str] = set()
     for point in points:
-        if not isinstance(point, dict) or not isinstance(point.get("value"), int):
-            raise ReplayError(f"SDK metric {metric['name']} has a malformed point")
+        scalar_type = float if metric["data_type"] == "gauge[float64]" else int
+        if not isinstance(point, dict) or type(point.get("value")) is not scalar_type:
+            raise ReplayError(f"SDK metric {name} has a malformed point")
+        value = point["value"]
+        if scalar_type is float:
+            if not math.isfinite(value) or value < 0:
+                raise ReplayError(f"SDK remaining lifetime is not finite and nonnegative")
+        elif not 0 <= value <= (1 << 63) - 1:
+            raise ReplayError(f"SDK metric {name} has an invalid Int64 value")
+        if name == "otelcol_netflow.exporter.uptime_exhausted" and value not in (0, 1):
+            raise ReplayError("SDK exhausted lifetime is not binary")
         if not all_attribute_values(point.get("attributes"), "point"):
             raise ReplayError(f"SDK metric {metric['name']} has malformed attributes")
+        if lifetime:
+            attrs = point["attributes"]
+            if (len(attrs) != 1 or attrs[0]["key"] != "exporter"
+                    or attrs[0]["type"] != "string" or not attrs[0]["value"]):
+                raise ReplayError(f"SDK gauge {name} requires only a nonempty string exporter")
+            if attrs[0]["value"] in seen_lifetime_exporters:
+                raise ReplayError(f"SDK gauge {name} has duplicate exporter points")
+            seen_lifetime_exporters.add(attrs[0]["value"])
+        if metric["name"] == REJECTION_METRIC:
+            attrs = {item["key"]: item for item in point["attributes"]}
+            if set(attrs) != {"exporter", "rejection_reason"}:
+                raise ReplayError("SDK rejected_records requires only exporter and rejection_reason")
+            if any(item["type"] != "string" for item in attrs.values()):
+                raise ReplayError("SDK rejected_records attributes must be strings")
+            if not attrs["exporter"]["value"] or attrs["rejection_reason"]["value"] not in REJECTION_REASONS:
+                raise ReplayError("SDK rejected_records has an unknown reason or empty exporter")
+            if point["value"] <= 0:
+                raise ReplayError("SDK rejected_records must have a genuine nonzero count")
 
 
 def find_mutation_target(snapshot: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -414,6 +484,7 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> ExportMetricsServiceReque
         add_attributes(scope_entry.scope.attributes, scope.get("attributes", []))
         scope_entry.schema_url = scope.get("schema_url", "")
         for item in entry["metrics"]:
+            validate_metric(item)
             metric = scope_entry.metrics.add()
             metric.name = item["name"]
             metric.description = item["description"]
@@ -424,7 +495,10 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> ExportMetricsServiceReque
                 destination.is_monotonic = bool(item.get("monotonic", False))
             for point in item["points"]:
                 output = destination.data_points.add()
-                output.as_int = point["value"]
+                if item["data_type"] == "gauge[float64]":
+                    output.as_double = point["value"]
+                else:
+                    output.as_int = point["value"]
                 output.time_unix_nano = point.get("time_unix_nano", 0)
                 output.start_time_unix_nano = point.get("start_time_unix_nano", 0)
                 add_attributes(output.attributes, point["attributes"])

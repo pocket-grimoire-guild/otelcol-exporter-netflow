@@ -105,6 +105,7 @@ func TestHelperAccounting(t *testing.T) {
 	}
 	failed := int64(0)
 	outcomes := map[string]int64{}
+	rejections := map[string]int64{}
 	for _, scope := range rm.ScopeMetrics {
 		for _, m := range scope.Metrics {
 			sum, ok := m.Data.(metricdata.Sum[int64])
@@ -118,12 +119,18 @@ func TestHelperAccounting(t *testing.T) {
 				case "otelcol_netflow.exporter.records":
 					v, _ := dp.Attributes.Value("outcome")
 					outcomes[v.AsString()] += dp.Value
+				case "otelcol_netflow.exporter.rejected_records":
+					v, _ := dp.Attributes.Value("rejection_reason")
+					rejections[v.AsString()] += dp.Value
 				}
 			}
 		}
 	}
 	if failed != 6 || outcomes["confirmed"] != 1 || outcomes["invalid"] != 2 || outcomes["ambiguous"] != 1 || outcomes["unsent"] != 2 {
 		t.Fatalf("helper=%d local=%v", failed, outcomes)
+	}
+	if rejections["unsupported_body"] != 2 {
+		t.Fatalf("rejected records=%v", rejections)
 	}
 }
 func testRecordIsolation(t *testing.T) {

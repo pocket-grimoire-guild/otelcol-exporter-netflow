@@ -251,6 +251,7 @@ a receiver's receipt/export-time fallback is not measured-time preservation.
 export NETFLOW_V5_PORT=2055
 export NETFLOW_V9_PORT=2056
 export NETFLOW_IPFIX_PORT=4739
+export NETFLOW_METRICS_PORT=8888
 export NETFLOW_V5_ENDPOINT=127.0.0.1:15005
 export NETFLOW_V9_ENDPOINT=127.0.0.1:15009
 export NETFLOW_IPFIX_ENDPOINT=127.0.0.1:14739
@@ -261,6 +262,54 @@ export NETFLOW_V9_ORIGIN="$NETFLOW_V5_ORIGIN"
 /tmp/otel-netflow-collector validate --config distribution/ocb/config.yaml
 /tmp/otel-netflow-collector --config distribution/ocb/config.yaml
 ```
+
+`NETFLOW_METRICS_PORT` is a numeric loopback TCP port for the configured pull
+Prometheus reader. Give each Collector process on the host a distinct unused
+port, then inspect the local endpoint with:
+
+```bash
+curl --fail --silent --show-error --max-time 1 \
+  --header 'Accept: text/plain; version=0.0.4' \
+  "http://127.0.0.1:${NETFLOW_METRICS_PORT}/metrics"
+```
+
+The reader exposes local exporter outcomes and Collector helper accounting;
+the [operator guide](../../docs/operator-guide.md#operator-metrics-and-mixed-requests)
+defines their mixed-record and UDP handoff semantics. The endpoint is loopback
+only and does not acknowledge delivery to a remote UDP receiver.
+
+The same reader exposes the lifetime pair for the successfully published v5
+and timed-v9 instances in this example:
+`otelcol_netflow_exporter_uptime_remaining` is a Float64 seconds gauge and
+`otelcol_netflow_exporter_uptime_exhausted` is a binary Int64 gauge with unit
+`1`. Both carry only `exporter`, with observed instances `netflow/v5` and
+`netflow/v9`; the IPFIX instance intentionally has no pair. Remaining is a
+collection-time projection of age from the configured origin, not Collector
+process age and not a promise of packet representability or UDP delivery.
+Exhausted reports the existing terminal latch and is not set by a quiet
+scrape. A `0`/`0` pair means the projection has reached the limit before an
+existing operation has latched the epoch; `1` means the published epoch is
+terminal, including after rewind, and valid local records remain unsent.
+Absent points cover IPFIX, unpublished or failed startup/bootstrap state,
+shutdown and unavailable telemetry; they must not be read as healthy zero.
+One scrape already in flight during endpoint replacement may show the old
+published epoch once; subsequent collection observes a successful replacement.
+While unlatched, invalid non-lifetime clock input omits only remaining and
+exhausted stays zero; a latched epoch keeps its `0`/`1` pair. Use independent health
+monitoring for reader/provider absence and retain the existing startup/helper
+failure and bounded-diagnostics guidance. An illustrative alert is remaining
+at or below **86,400 seconds**, adjusted for migration lead time and scrape
+interval, together with immediate exhausted-equals-one handling. This is an
+operator monitoring example, not a product cutoff, warning, retry, reset or
+configurable lifetime; the existing origin/restart and IPFIX guidance applies.
+
+The ordinary smoke matrix intentionally derives `level: none` while retaining
+the reader stanza. It holds a numeric test-owned loopback TCP reservation over
+startup and shutdown to prove that the disabled provider ignores the reader,
+then closes and rebinds that reservation. Transport isolation keeps its
+explicit disabled/no-reader service configuration and needs no metrics
+environment variable. The normal operator example uses `level: normal` and
+releases its reserved metrics port just before process start.
 
 The example intentionally accepts only the TCP and UDP tokens used here. Review
 the [mapping profiles](../../docs/compatibility/default-profiles.md) and explicit
