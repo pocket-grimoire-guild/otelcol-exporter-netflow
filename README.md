@@ -10,10 +10,10 @@ executable or part of a stock Contrib distribution.
 The component identity is `netflow`, the Go package is `netflowexporter`, and
 the input schema is the versioned
 `contrib-netflowreceiver-v0.160.0` profile. The source is licensed under
-[Apache-2.0](LICENSE). Existing public tag `v0.1.0` points at the earlier
-public baseline; the current source fixes are untagged. `v0.1.0-alpha.1` is a
-synthetic local staging version used only by `check-consumer.sh`, is unpublished
-and cannot be fetched from a public module proxy. No maintained binary or
+[Apache-2.0](LICENSE). The [v0.2.0 source/module release](docs/release.md)
+retains pre-1.0 alpha maturity. Its consumer recipe selects `v0.2.0`; public
+installation requires that immutable tag. The isolated staged check is local
+packaging evidence, not proof of public retrieval. No maintained binary or
 container image is offered.
 
 ## Supported build
@@ -31,9 +31,9 @@ the [operator guide](docs/operator-guide.md#build-and-run-the-example):
 /tmp/otel-netflow-collector validate --config distribution/ocb/config.yaml
 ```
 
-The [versioned consumer recipe](distribution/ocb/consumer/README.md) is for
-use after the project has a published immutable tag. It requires the exporter
-module at that tag and strict version checking:
+Place the linked manifest and configuration files from the
+[v0.2.0 consumer recipe](distribution/ocb/consumer/README.md) in a separate
+consumer directory. It selects exporter `v0.2.0` with strict version checking:
 
 ```bash
 go run go.opentelemetry.io/collector/cmd/builder@v0.160.0 \

@@ -3,12 +3,14 @@
 This is the external user path for
 `github.com/pocket-grimoire-guild/otelcol-exporter-netflow`. It builds a source-based
 OpenTelemetry Collector with the exporter registered through its public
-`NewFactory` API. The existing public `v0.1.0` tag points at the earlier public
-baseline. The checked-in example uses `v0.1.0-alpha.1` only as a synthetic
-local staging version for `check-consumer.sh`; it is unpublished and cannot
-be fetched from a public module proxy.
+`NewFactory` API. The checked-in recipe selects exporter `v0.2.0` and
+Collector distribution version `0.2.0`, with no local replacement. It requires
+the public immutable `v0.2.0` tag. The isolated staged check below uses a
+separate synthetic identity and does not establish public tag availability or
+anonymous retrieval. See the [release notes](../../../docs/release.md) for
+changes since `v0.1.0` and upgrade guidance.
 
-The supported first-release target is Linux/amd64 with Go `1.26.8` and OCB
+The supported source-build target is Linux/amd64 with Go `1.26.8` and OCB
 `v0.160.0`. The manifest pins Collector Core `v1.66.0`, the beta `v0.160.0`
 service modules, and the Contrib
 `netflowreceiver v0.160.0` schema. Its env and file providers are pinned at
@@ -16,14 +18,7 @@ Core `v1.66.0`. The exporter is selected by its explicit module version; the
 manifest contains no local replacement and does not require a checkout path,
 host bootstrap, credentials, a container socket, or a maintained binary.
 
-## Template for a future versioned build
-
-For the current untagged fixes, use the working
-[checkout build](../README.md) from the repository root. The commands
-below require a separately published version that includes the desired fixes;
-update the manifest to that version first. The checked-in alpha pin works only
-with the staged check below, and the existing `v0.1.0` baseline predates these
-fixes. No new release version is selected here.
+## Build v0.2.0
 
 Place [`manifest.yaml`](manifest.yaml), [`config.yaml`](../config.yaml), and
 [`config-consumer-30s.yaml`](../config-consumer-30s.yaml) in a separate
@@ -37,12 +32,13 @@ gofmt -w dist/ocb/*.go
 ./dist/ocb/otel-netflow-collector --version
 ```
 
-The generated `dist/ocb/go.mod` should require the staged
-`github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.1.0-alpha.1` with
-no `replace` directive. That check uses a synthetic local file proxy and does
-not establish public retrieval. After a future explicit publication, a public
-build must resolve its exact immutable version through ordinary Go
-proxy/checksum or direct Git settings. The current source fixes are untagged.
+The generated `dist/ocb/go.mod` should require
+`github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.2.0` with no
+`replace` directive. `go version -m ./dist/ocb/otel-netflow-collector` should
+show that exact exporter dependency, and `--version` should report `0.2.0`.
+A public build resolves the module through ordinary public Go proxy/checksum
+settings. Do not use the staged file proxy or disable checksum verification
+as a substitute for public installation.
 
 Use separate, nonzero input ports and output endpoints, and keep them
 different so a pipeline cannot feed itself. Set all of the following before
@@ -131,8 +127,9 @@ independent packet assertions used by the local check.
 
 From the repository root, the bounded local check creates a temporary module
 proxy and separate Go module/build caches outside the source tree. It archives
-the selected Git revision under the unpublished alpha version, builds this
-manifest with strict OCB checking, and runs the existing smoke, transport,
+the selected Git revision as synthetic `v0.1.0-alpha.1`, rewrites only a
+temporary manifest copy from `v0.2.0` / `0.2.0` to that staged module/distribution
+version, builds with strict OCB checking, and runs the existing smoke, transport,
 operator-example, queue rejection, and 30-second minimum validation tests from
 an archived source tree:
 
@@ -145,10 +142,16 @@ identity, archive/test/config hashes, and the dependency resolution policy:
 the exporter comes from the staged file proxy; other dependencies use a separate
 cache seeded from the current module cache, with public proxy fallback enabled.
 This does not attribute individual network downloads. All recipe and test inputs
-come from the selected revision, which must contain this consumer recipe. It never adds a replacement to the versioned
-manifest or mutates the root module. A staged local proxy verifies packaging
-and factory compilation; it does not establish that anonymous public module
-retrieval works before publication.
+come from the selected revision, which must contain the v0.2.0 consumer recipe.
+The check fails if the expected release pins drift. It never changes the
+checked-in manifest, adds a replacement, or mutates the root module. The
+integration identity modes remain distinct: `NETFLOW_OCB_BUILD=staged` requires
+`v0.1.0-alpha.1`, `versioned` requires `v0.2.0`, and the default development
+mode requires the deliberate local replacement. All modes check the same
+Go/Collector/receiver pins. The staged exporter alone bypasses the public
+checksum database via `GONOSUMDB`; other dependencies retain public checksum
+verification. This local packaging evidence is not anonymous installation
+evidence. The real versioned recipe above does not use this bypass.
 
 The separate development recipe remains available through
 [`../manifest.yaml`](../manifest.yaml), `../build.sh`, and

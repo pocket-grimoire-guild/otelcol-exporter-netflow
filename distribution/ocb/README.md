@@ -1,8 +1,10 @@
 # Local Collector distribution
 
 For a separate Collector using an explicit exporter module version, see the
-[versioned consumer recipe](consumer/README.md). Its alpha version is explicitly
-unpublished; the isolated staged check verifies local packaging and integration.
+[v0.2.0 consumer recipe](consumer/README.md). It selects the real module
+version without a local replacement. The separate staged check verifies local
+packaging and integration under a synthetic identity; it does not prove public
+module retrieval.
 
 For the operator-facing walkthrough, complete environment settings, profile
 choices, fit calculations and lifetime/security limits, see the

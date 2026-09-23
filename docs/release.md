@@ -1,11 +1,12 @@
-# Alpha release notes and publication checklist
+# v0.2.0 source release
 
-Existing public tag `v0.1.0` points at the earlier public baseline. The current
-source fixes are untagged. `v0.1.0-alpha.1` is a synthetic local staging
-version used only by `check-consumer.sh`; it is unpublished and cannot be
-fetched from a public module proxy. This checkout is suitable for local build
-and review; it does not establish anonymous module retrieval, a maintained
-binary or image, or a hosted CI result.
+`v0.2.0` is a source/Go-module release with the changes below since `v0.1.0`.
+It retains **pre-1.0 alpha maturity**, the pinned parsed receiver schema and
+the existing protocol/delivery limits. No maintained binary or container image
+is offered. The [versioned consumer recipe](../distribution/ocb/consumer/README.md)
+selects exporter `v0.2.0` and distribution version `0.2.0`; it requires the
+public immutable tag. A staged local build does not establish tag availability,
+hosted CI success or anonymous public module retrieval.
 
 ## Component
 
@@ -25,19 +26,62 @@ legacy v9 time-free and IPFIX NTP layouts remain explicit alternatives.
 Records are packetized at record boundaries, cancellation and partial failures
 are reported, and named destinations have separate protocol state.
 
-## Untagged source changes
+## Changes since v0.1.0
 
-Compared with the `v0.1.0` baseline, current source adds cancelable waiting for
-internal maintenance while preserving immediate busy responses for a second
-request, independent next-hop family validation at selected wire slots, and
-bounded configuration diagnostics. Fixed rejection-reason counters and v5/v9
-lifetime gauges make local drops and terminal uptime exhaustion observable.
-The operator examples enable metrics through `NETFLOW_METRICS_PORT`.
+- An admitted request can wait cancelably for internal maintenance. A concurrent
+  second request still receives busy; this does not add a request queue or retry.
+- Next-hop addresses are validated against selected wire slots independently
+  of the flow's source/destination family. An unselected next hop no longer
+  invalidates a flow just because its family differs. Selected values must
+  still fit their output slot; v5 remains IPv4-only.
+- Configuration diagnostics identify fixed rules and paths with bounded
+  messages, without echoing raw endpoints, tokens or compiler-error text.
+- Rejected records have fixed first-reason counters with a closed, 13-value
+  `rejection_reason` vocabulary. These counters make rejected records visible
+  even when valid siblings complete successfully in a mixed request.
+- Operator examples enable a loopback Prometheus reader through
+  `NETFLOW_METRICS_PORT`. The `otelcol_netflow_exporter_uptime_remaining` and
+  `otelcol_netflow_exporter_uptime_exhausted` gauges describe published v5/v9
+  origin-relative lifetime state. IPFIX has no lifetime pair. Collection does
+  not latch exhaustion, extend lifetime or confirm remote delivery.
+- Mapping coverage manifest version 2 pins source declarations and checks
+  semantic tables instead of whole-document hashes. Regression and reusable
+  conformance checks cover the corresponding source changes.
 
-The mapping coverage manifest uses version 2, with pinned source declarations
-and semantic table checks instead of whole-document hashes. Ordinary
-regressions and the reusable conformance and Collector checks accompany these
-changes. These source changes have no newly selected release tag.
+## Install or upgrade
+
+Use the [complete consumer recipe](../distribution/ocb/consumer/README.md) with
+Go `1.26.8` on Linux/amd64. Copy its manifest and both linked configuration
+files into a separate consumer directory, then run:
+
+```bash
+mkdir -p dist
+go run go.opentelemetry.io/collector/cmd/builder@v0.160.0 \
+  --config manifest.yaml --skip-strict-versioning=false
+gofmt -w dist/ocb/*.go
+./dist/ocb/otel-netflow-collector --version
+go version -m ./dist/ocb/otel-netflow-collector
+```
+
+Expect Collector distribution version `0.2.0` and exporter dependency
+`github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.2.0`, without
+an exporter replacement. Export **all environment settings in the recipe**,
+including a distinct loopback `NETFLOW_METRICS_PORT` for each process, before
+validating and running `config.yaml`. The optional `config-consumer-30s.yaml`
+selects a 30-second template refresh; the default remains ten minutes.
+
+To upgrade from `v0.1.0`, select `v0.2.0` in the exporter `gomod` entry and
+`0.2.0` in `dist.version`, rebuild the Collector with the same pinned toolchain,
+and validate the deployment's configuration before replacing its executable.
+The component type `netflow`, package `netflowexporter`, configuration keys,
+input schema and built-in profile contracts are unchanged. Set the metrics
+port when adopting the updated examples; review the
+[operator metrics semantics](operator-guide.md#operator-metrics-and-mixed-requests)
+for mixed requests, lifetime gauges and absent series. Preserve explicit
+origins appropriate to historical source flows; restarting with the same
+origin does not reset the approximately 49.71-day v5/v9 lifetime. See the
+[compatibility and upgrade contract](compatibility/alpha-upgrades.md) before
+changing origins, templates or time profiles.
 
 ## Known limits
 
@@ -71,32 +115,39 @@ Evidence is local and version-specific. It does not claim hosted workflow
 execution, public registry ingestion, remote UDP receipt, downstream appliance
 compatibility, or broad platform support.
 
-## Before publishing a tag
+## Verification and publication checklist
 
-Run the checks against the exact commit selected for the tag. Set the ports,
-endpoints, loopback `NETFLOW_METRICS_PORT` and uptime origins from the
-[operator guide](operator-guide.md#build-and-run-the-example) before validating
-the configuration. Copy the binary outside the checkout;
-OCB also generates an ignored `dist/ocb/` build directory:
+Run repository and isolated packaging checks against the exact reviewed
+candidate, with Go `1.26.8` on `PATH`:
 
 ```bash
 make check test
 git diff --check
-./distribution/ocb/build.sh --go 1.26.8 --out /tmp/otel-netflow-collector
-/tmp/otel-netflow-collector validate --config distribution/ocb/config.yaml
+./distribution/ocb/check-consumer.sh --revision "$(git rev-parse HEAD)"
 ```
 
-Run the receiver, independent-oracle, OCB, and selected integration checks
-documented by the [operator guide](operator-guide.md) and
-[verification strategy](design-docs/implementation-verification.md). Re-run
-dependency or advisory checks when the selected commit or pins change; record
-their scope and date.
+The staged check archives that revision under synthetic `v0.1.0-alpha.1` and
+rewrites only a temporary copy of the consumer manifest. It uses a local file
+proxy and an exporter-only checksum exemption, strict OCB version checking,
+embedded binary/module identity assertions, and bounded Collector
+smoke/config/transport checks. It is packaging evidence, not anonymous
+installation evidence. The development recipe retains its deliberate local
+replacement. Neither path may stand in for public versioned consumption.
 
-After a real immutable tag is published, verify from a fresh consumer with
-ordinary public proxy/checksum settings and no local replacement. Build the
-versioned recipe with strict version checking, run its complete configuration,
-and record the resolved module version and checksum. A local checkout, file
-proxy, or authenticated source does not satisfy this check.
+For publication, review the exact source/history and preserve existing tags.
+After publishing an immutable tag, verify its hosted CI separately and use a
+fresh consumer with `GOPROXY=https://proxy.golang.org`,
+`GOSUMDB=sum.golang.org`, no private-module/checksum bypass, credentials, local
+replacement or staged exporter cache. Record the resolved version and module
+checksums, build the unchanged versioned recipe with strict checking, and run
+the bounded Collector checks with `NETFLOW_OCB_BUILD=versioned`. A download or
+`--version` alone is not complete integration evidence. Never move a published
+tag to conceal a defect; a corrective release needs a new version.
+
+Reuse unchanged wire qualification with its recorded scope. Re-run affected
+checks when source, configuration or pins change; identify dated advisory
+results as historical. No hosted CI, tag publication or anonymous retrieval
+success is asserted by this checklist.
 
 Binary, container, signing, checksum, SBOM, and linked notice bundles require a
 separate artifact decision. No such maintained artifact is promised by this

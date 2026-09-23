@@ -1,16 +1,15 @@
-# Synthetic local staging manifest for check-consumer.sh. The alpha pin is
-# unpublished and cannot be fetched publicly. Use the checkout build for current
-# source fixes; the existing v0.1.0 tag contains the older public baseline.
+# Versioned source-release consumer recipe; no local replacement.
+# check-consumer.sh rewrites only a temporary copy for isolated staging.
 dist:
   module: github.com/pocket-grimoire-guild/otelcol-exporter-netflow/distribution/consumer
   name: otel-netflow-collector
   description: OpenTelemetry Collector with the NetFlow exporter
-  version: 0.1.0-alpha.1
+  version: 0.2.0
   output_path: ./dist/ocb
 receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/netflowreceiver v0.160.0
 exporters:
-  - gomod: github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.1.0-alpha.1
+  - gomod: github.com/pocket-grimoire-guild/otelcol-exporter-netflow v0.2.0
     name: netflowexporter
 providers:
   - gomod: go.opentelemetry.io/collector/confmap/provider/envprovider v1.66.0

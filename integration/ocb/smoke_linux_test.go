@@ -408,13 +408,6 @@ func assertBuild(t *testing.T, bin string) {
 		"github.com/open-telemetry/opentelemetry-collector-contrib/receiver/netflowreceiver": "v0.160.0",
 		"github.com/netsampler/goflow2/v2":                                                   "v2.2.6",
 	}
-	buildMode := os.Getenv("NETFLOW_OCB_BUILD")
-	if buildMode == "" {
-		buildMode = "development"
-	}
-	if buildMode != "development" && buildMode != "versioned" {
-		t.Fatalf("unsupported NETFLOW_OCB_BUILD=%q", buildMode)
-	}
 	var exporter string
 	for _, dep := range info.Deps {
 		if version, ok := pins[dep.Path]; ok {
@@ -431,12 +424,56 @@ func assertBuild(t *testing.T, bin string) {
 			}
 		}
 	}
-	wantExporter := "v0.0.0 => ../.. ((devel))"
-	if buildMode == "versioned" {
-		wantExporter = "v0.1.0-alpha.1"
+	if len(pins) != 0 {
+		t.Fatalf("missing pinned components: %v", pins)
 	}
-	if len(pins) != 0 || exporter != wantExporter {
-		t.Fatalf("missing pinned components/exporter identity: %v exporter=%q want=%q mode=%s", pins, exporter, wantExporter, buildMode)
+	must(t, checkExporterBuildIdentity(exporter, os.Getenv("NETFLOW_OCB_BUILD")))
+}
+
+func checkExporterBuildIdentity(exporter, buildMode string) error {
+	var want string
+	switch buildMode {
+	case "", "development":
+		want = "v0.0.0 => ../.. ((devel))"
+	case "versioned":
+		want = "v0.2.0"
+	case "staged":
+		want = "v0.1.0-alpha.1"
+	default:
+		return fmt.Errorf("unsupported NETFLOW_OCB_BUILD=%q", buildMode)
+	}
+	if exporter != want {
+		return fmt.Errorf("exporter identity=%q want=%q mode=%q", exporter, want, buildMode)
+	}
+	return nil
+}
+
+func TestExporterBuildIdentity(t *testing.T) {
+	// Each source path must reject the other paths' identities, even when the
+	// exporter has the right module name. No arbitrary version override exists.
+	identities := map[string]string{
+		"development": "v0.0.0 => ../.. ((devel))",
+		"versioned":   "v0.2.0",
+		"staged":      "v0.1.0-alpha.1",
+	}
+	for mode, identity := range identities {
+		for source, candidate := range identities {
+			t.Run(mode+"/"+source, func(t *testing.T) {
+				err := checkExporterBuildIdentity(candidate, mode)
+				if (err == nil) != (source == mode) {
+					t.Fatalf("identity=%q mode=%q: %v", candidate, mode, err)
+				}
+			})
+		}
+		for _, candidate := range []string{"", "v0.1.0", identity + " => ../.. ((devel))"} {
+			if err := checkExporterBuildIdentity(candidate, mode); err == nil {
+				t.Fatalf("accepted missing, old, or replaced exporter %q in mode %q", candidate, mode)
+			}
+		}
+	}
+	must(t, checkExporterBuildIdentity(identities["development"], ""))
+	if err := checkExporterBuildIdentity(identities["versioned"], "unknown"); err == nil {
+		t.Fatal("accepted unsupported build mode")
 	}
 }
 

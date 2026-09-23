@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and exercise the explicitly unpublished versioned consumer path.
+# Build and exercise an isolated staged copy of the versioned consumer recipe.
 set -euo pipefail
 
 usage() {
@@ -41,6 +41,7 @@ else
   revision=$(git -C "$repo" rev-parse --verify 'HEAD^{commit}')
 fi
 version=v0.1.0-alpha.1
+recipe_version=v0.2.0
 module=github.com/pocket-grimoire-guild/otelcol-exporter-netflow
 
 scratch=$(mktemp -d /tmp/otel-netflow-consumer.XXXXXX)
@@ -64,7 +65,23 @@ git -C "$repo" show "$revision:go.mod" > "$proxy/$module/@v/$version.mod"
 commit_time=$(git -C "$repo" show -s --format=%cI "$revision")
 printf '{"Version":"%s","Time":"%s"}\n' "$version" "$commit_time" > "$proxy/$module/@v/$version.info"
 
-cp -- "$source/distribution/ocb/consumer/manifest.yaml" "$workspace/manifest.yaml"
+# Keep the checked-in release recipe intact. Stage only this temporary copy
+# under a distinct, unpublished identity, and fail closed if its pins drift.
+awk -v module="$module" -v recipe="$recipe_version" -v staged="$version" '
+  $0 == "  version: " substr(recipe, 2) {
+    $0 = "  version: " substr(staged, 2)
+    distribution_count++
+  }
+  $0 == "  - gomod: " module " " recipe {
+    $0 = "  - gomod: " module " " staged
+    exporter_count++
+  }
+  { print }
+  END { if (distribution_count != 1 || exporter_count != 1) exit 1 }
+' "$source/distribution/ocb/consumer/manifest.yaml" > "$workspace/manifest.yaml" || {
+  echo 'consumer manifest must select the exact release and distribution versions' >&2
+  exit 1
+}
 cp -- "$source/distribution/ocb/config-consumer-30s.yaml" "$workspace/config-consumer-30s.yaml"
 
 # Seed an isolated module cache with the prefilled public cache when one is
@@ -141,8 +158,9 @@ EOF
     --out "$proxy/$module/@v/$version.zip"
 )
 
-printf 'versioned consumer check\n'
+printf 'staged consumer check\n'
 printf 'source revision: %s\n' "$revision"
+printf 'consumer recipe: %s %s (temporary staging rewrite only)\n' "$module" "$recipe_version"
 printf 'staged module: %s %s\n' "$module" "$version"
 printf 'toolchain: %s\n' "$($go_bin version)"
 printf 'OCB: v0.160.0 (strict version checks)\n'
@@ -150,7 +168,8 @@ printf 'dependency mode: %s\n' "$cache_mode"
 printf 'workspace/cache: %s / %s\n' "$workspace" "$modcache"
 printf 'archived source tree: %s\n' "$source"
 printf 'staged exporter zip sha256: %s\n' "$(sha256sum "$proxy/$module/@v/$version.zip" | awk '{print $1}')"
-printf 'consumer manifest sha256: %s\n' "$(sha256sum "$workspace/manifest.yaml" | awk '{print $1}')"
+printf 'release manifest sha256: %s\n' "$(sha256sum "$source/distribution/ocb/consumer/manifest.yaml" | awk '{print $1}')"
+printf 'staged manifest sha256: %s\n' "$(sha256sum "$workspace/manifest.yaml" | awk '{print $1}')"
 printf 'standard config sha256: %s\n' "$(sha256sum "$source/distribution/ocb/config.yaml" | awk '{print $1}')"
 printf '30s config sha256: %s\n' "$(sha256sum "$source/distribution/ocb/config-consumer-30s.yaml" | awk '{print $1}')"
 for relative in \
@@ -184,7 +203,7 @@ fi
 (
   cd "$source"
   export NETFLOW_OCB_BINARY=$binary
-  export NETFLOW_OCB_BUILD=versioned
+  export NETFLOW_OCB_BUILD=staged
   export NETFLOW_OCB_ARTIFACTS=$artifacts
   export NETFLOW_OCB_FIXTURE=$source/integration/testdata/ocb/canonical.yaml
   "$go_bin" test -mod=readonly ./integration/ocb \
@@ -193,4 +212,4 @@ fi
 )
 
 printf 'dependency resolution policy: exporter from staged file proxy; %s (not anonymous installation evidence)\n' "$cache_mode"
-printf 'versioned consumer PASS: %s at %s\n' "$version" "$revision"
+printf 'staged consumer PASS: %s at %s\n' "$version" "$revision"
